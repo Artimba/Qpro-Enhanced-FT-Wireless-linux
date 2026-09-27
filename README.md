@@ -17,3 +17,10 @@ The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/332
 The runnable release keeps the Hub and guide in its main folder. This GitHub repository keeps the development source, tests, and build scripts together in [`src/`](src/). Run `src/build-release.ps1` from the source folder when building your own package; it needs the binary assets from an existing release or the original package.
 
 For help, share relevant Hub **Activity** lines in the [community Discord](https://discord.gg/ghvuJTpRu4). The server is not owned by Fwooffy. QproFaceTracking is unaffiliated with Meta, Virtual Desktop, VRCFaceTracking, and VRChat.
+
+## Credits
+
+- [n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT) created the original Qpro-Enhanced-FT project that this edition is based on.
+- Fwooffy made this V2.0 edition and its beginner face tracking guide.
+- [Lumince and the Singularity contributors](https://github.com/Lumince/singularity) created the headset root project used by this workflow.
+- Fwooffy wrote the original [beginner Quest root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md), and [glorpette](https://github.com/glorpette/quest-guides) made and hosts its GitHub version.
