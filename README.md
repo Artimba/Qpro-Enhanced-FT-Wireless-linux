@@ -8,7 +8,6 @@ The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/332
 
 ## Guides
 
-- [Beginner PDF guide](src/Quest_Pro_Enhanced_Face_Tracking_Guide.pdf)
 - [Text setup instructions](src/RELEASE_INSTRUCTIONS.md)
 - [Detailed release notes](src/RELEASE_README.md)
 - [Quest Pro rooting guide by glorpette and Fwooffy](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md)
