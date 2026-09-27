@@ -176,6 +176,8 @@ internal sealed partial class HubForm
     {
         BeginSetupProgress(label);
         var succeeded = await RunUtilityAsync(label, script);
+        if (script.Equals("Install-QproRocm.ps1", StringComparison.OrdinalIgnoreCase))
+            _rocmInstallRunning = false;
         FinishSetupProgress(succeeded, label);
         if (!succeeded) return;
         UpdateSetupStepStyles();

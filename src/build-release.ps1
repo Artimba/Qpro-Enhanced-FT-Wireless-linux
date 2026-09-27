@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.0",
+    [string]$Version = "2.0.2",
     [string]$PackageName = "",
     [switch]$NoRestore,
     [string]$AssetRoot = "",
@@ -126,6 +126,24 @@ $runtimeFiles = @(
     "release-manifest.json"
 )
 foreach ($file in $runtimeFiles) { Copy-ReleaseFile $file }
+# Check the packaged Python tree, not only the source list. A missing local
+# module can otherwise leave capture working while training fails at import.
+$missingLocalImports = @(
+    Get-ChildItem -LiteralPath $runtimeRoot -Recurse -File -Filter '*.py' | ForEach-Object {
+        $importer = $_.FullName
+        $code = [System.IO.File]::ReadAllText($importer)
+        foreach ($match in [regex]::Matches($code, '(?m)^[ \t]*(?:from|import)[ \t]+([A-Za-z_][A-Za-z0-9_]*)')) {
+            $module = $match.Groups[1].Value
+            if ((Test-Path -LiteralPath (Join-Path $root "$module.py") -PathType Leaf) -and
+                -not (Test-Path -LiteralPath (Join-Path $runtimeRoot "$module.py") -PathType Leaf)) {
+                "$([System.IO.Path]::GetFileName($importer)) imports missing $module.py"
+            }
+        }
+    } | Sort-Object -Unique
+)
+if ($missingLocalImports.Count) {
+    throw "Local Python imports are missing from the release: $($missingLocalImports -join '; ')"
+}
 foreach ($file in @("succeed.wav", "trainingComplete.wav", "warning.wav")) {
     Copy-ReleaseFile ("SFX\" + $file)
 }
@@ -190,6 +208,21 @@ Set-Content -LiteralPath (Join-Path $releaseRoot "SHA256SUMS.txt") -Value $hashL
 $archive = "$releaseRoot.zip"
 if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
 Compress-Archive -LiteralPath $releaseRoot -DestinationPath $archive -CompressionLevel Optimal
+
+$releaseZip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+try {
+    $missingArchiveFiles = @(
+        $runtimeFiles | Where-Object {
+            $entry = "$releaseName/QproRuntime/$($_.Replace('\', '/'))"
+            $null -eq $releaseZip.GetEntry($entry)
+        }
+    )
+    if ($missingArchiveFiles.Count) {
+        throw "Required runtime files are missing from the ZIP: $($missingArchiveFiles -join ', ')"
+    }
+} finally {
+    $releaseZip.Dispose()
+}
 
 Write-Host "RELEASE_READY folder=$releaseRoot"
 Write-Host "RELEASE_READY zip=$archive"

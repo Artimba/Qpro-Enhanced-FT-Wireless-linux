@@ -209,7 +209,7 @@ def main() -> int:
                 rate_count = 0
                 rate_start = now
             if deadline is not None:
-                if not received:
+                if not received_valid:
                     time.sleep(0.005)
                 continue
 
@@ -273,7 +273,7 @@ def main() -> int:
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
                 break
-            if not received:
+            if not received_valid:
                 time.sleep(0.002)
 
         if latest is None or filtered_left is None or filtered_right is None:

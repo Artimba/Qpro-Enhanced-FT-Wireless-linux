@@ -1,9 +1,14 @@
 import math
+import queue
 import struct
+import sys
 import unittest
+from contextlib import ExitStack
+from unittest import mock
 
 import numpy as np
 
+import independent_visual_axis_runtime as gaze_runtime
 from independent_visual_axis_runtime import (
     PACKET_FORMAT,
     PACKET_MAGIC,
@@ -68,6 +73,56 @@ class RuntimeContractTests(unittest.TestCase):
         )
         _magic, _version, flags, *_values = struct.unpack(PACKET_FORMAT, packet)
         self.assertEqual(flags, 2)
+
+    def test_headless_runtime_handles_valid_and_idle_loops(self):
+        self.assertEqual(self._run_with_one_sample(headless=True), 0)
+
+    def test_visual_runtime_handles_valid_and_idle_loops(self):
+        self.assertEqual(self._run_with_one_sample(headless=False), 0)
+
+    def _run_with_one_sample(self, *, headless: bool) -> int:
+        sample = RawEyeSample(
+            pc_monotonic_ns=1,
+            kernel_time_s=1.0,
+            left_valid=True,
+            right_valid=True,
+            left_vector=(0.1, 0.0, 1.0),
+            right_vector=(-0.1, 0.0, 1.0),
+        )
+        reader = mock.Mock()
+        reader.samples = queue.Queue()
+        reader.samples.put(sample)
+        reader.errors = queue.Queue()
+        calibration = {"quality_gate": {"convergence_pass": False}}
+        arguments = ["gaze", "--adb", "test", "--calibration", "test"]
+        if headless:
+            arguments.extend(["--headless-seconds", "0.03"])
+
+        with ExitStack() as patches:
+            patches.enter_context(mock.patch.object(sys, "argv", arguments))
+            patches.enter_context(mock.patch.object(gaze_runtime, "load_calibration", return_value=calibration))
+            patches.enter_context(mock.patch.object(gaze_runtime, "RawTraceEyeReader", return_value=reader))
+            patches.enter_context(mock.patch.object(
+                gaze_runtime, "calibrated_angles",
+                return_value=(np.array([1.0, 2.0]), np.array([-1.0, 2.0])),
+            ))
+            patches.enter_context(mock.patch.object(
+                gaze_runtime, "IndependentEyeFilter",
+                return_value=mock.Mock(update=mock.Mock(return_value=(
+                    np.array([1.0, 2.0]), np.array([-1.0, 2.0])
+                ))),
+            ))
+            if not headless:
+                for name in ("namedWindow", "resizeWindow", "imshow", "destroyWindow"):
+                    patches.enter_context(mock.patch.object(gaze_runtime.cv2, name))
+                patches.enter_context(mock.patch.object(gaze_runtime.cv2, "waitKey", side_effect=[-1, ord("q")]))
+                patches.enter_context(mock.patch.object(gaze_runtime, "put_text"))
+                patches.enter_context(mock.patch.object(gaze_runtime, "gaze_panel"))
+            result = gaze_runtime.main()
+
+        reader.start.assert_called_once_with()
+        reader.close.assert_called_once_with()
+        return result
 
 
 if __name__ == "__main__":

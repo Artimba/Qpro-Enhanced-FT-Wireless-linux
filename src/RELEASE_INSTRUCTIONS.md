@@ -1,8 +1,8 @@
-# QproFaceTracking V2.0: text setup guide
+# QproFaceTracking V2.0.2: text setup guide
 
 > **Before you start: you need a rooted Meta Quest Pro and the latest VRCFaceTracking from Steam.** This program will not work on an unrooted headset or a different Quest model. If you still need to root your Quest Pro, use [Fwooffy and glorpette's beginner root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md). Check that your headset's exact software version is supported by [Singularity](https://github.com/Lumince/singularity) before following a root guide. [Install or update VRCFaceTracking through Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) before using Qpro's bridge.
 >
-> **If you used an older QproFaceTracking version, record and train your tongue model again in this version.** Do not import an old tongue model and assume it will work correctly. Keep the old model as a backup, but make a new capture and train a new model before using tongue tracking. The included developer model is only a starting point.
+> **If you used a QproFaceTracking version before V2.0, record and train your tongue model again.** Do not import a pre-V2.0 model and assume it will work correctly. A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2. The included developer model is only a starting point.
 
 Start with the headset's eye tracking, then set up the PC software. The **Hub** is the `QproFaceTracking.exe` program. **ADB** is the connection it uses to talk to your Quest. The **bridge** sends Qpro's tracking results to VRCFaceTracking.
 
@@ -68,14 +68,14 @@ To remove Qpro's VRCFaceTracking add-on later, close VRCFaceTracking and press *
 
 ## 6. Record and train your tongue model
 
-**Do this again even if you trained a model in an older version. Do not use Import as a shortcut for this step.** The bundled developer model can show that tracking starts, but it was trained for someone else's face.
+**Train if you have no personal model or used a version before V2.0. You can import a working V2.0 or V2.0.1 model into V2.0.2.** The bundled model was trained for someone else's face.
 
 1. Open **Personalize** in the Hub.
 2. Choose **Quick refinement** for the shorter guided session, or **Full dataset** for more thorough coverage. Press **1. Record refinement** or **1. Record full dataset**.
 3. Follow each on-screen pose card. Include the side and **diagonal** tongue positions. Missing a pose can make tracking briefly disappear there.
 4. When recording finishes, choose the new recording in the list. Press **2. Train personalized copy** or **2. Train new personal model**. Wait for Activity to say training finished.
 
-The **Model manager** can export your *new* model as a backup. Old `.qptonguemodel` files should be kept separately; they do not replace training again in this version. Camera recordings are personal data, so share them only if you want to.
+The **Model manager** can export a model as a backup. Import working V2.0 or V2.0.1 exports into V2.0.2; for pre-V2.0 exports, make a new capture and train again. Camera recordings are personal data, so share them only if you want to.
 
 To remove a recording you no longer need, stay on **Personalize**. Under the matching **Quick refinement** or **Full dataset** card, choose it from **Recorded datasets (including trained)** and press **Delete selected dataset…**. Read the confirmation before choosing **Yes**: this permanently removes the recording, its labels and session details, and its prepared training cache from this extracted copy. A tongue model already trained from that recording remains available in **Model manager**. The training dropdown above only lists datasets still waiting to be trained.
 

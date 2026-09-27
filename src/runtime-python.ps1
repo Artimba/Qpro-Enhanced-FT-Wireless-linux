@@ -29,8 +29,8 @@ function Find-QproExistingPython312 {
         if ($null -eq $key) { continue }
         $executable = $key.GetValue('ExecutablePath')
         if (-not [string]::IsNullOrWhiteSpace($executable)) { $candidates.Add($executable) }
-        $home = $key.GetValue('')
-        if (-not [string]::IsNullOrWhiteSpace($home)) { $candidates.Add((Join-Path $home 'python.exe')) }
+        $pythonInstallDir = $key.GetValue('')
+        if (-not [string]::IsNullOrWhiteSpace($pythonInstallDir)) { $candidates.Add((Join-Path $pythonInstallDir 'python.exe')) }
     }
 
     $pathPython = Get-Command python.exe -ErrorAction SilentlyContinue

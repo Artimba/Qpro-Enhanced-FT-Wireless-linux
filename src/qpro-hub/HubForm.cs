@@ -101,7 +101,7 @@ internal sealed partial class HubForm : Form
         _gaze.Checked = _environment.IndependentGazeEnabled;
         _scripts = new HubScriptFactory(root, _environment);
         _stopFile = Path.Combine(root, ".qpro-hub-stop");
-        Text = "QproFaceTracking V2.0 Hub";
+        Text = "QproFaceTracking V2.0.2 Hub";
         MinimumSize = new Size(780, 580);
         Size = new Size(1140, 850);
         AutoScaleMode = AutoScaleMode.Dpi;

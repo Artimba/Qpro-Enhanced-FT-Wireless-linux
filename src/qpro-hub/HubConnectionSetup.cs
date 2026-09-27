@@ -20,9 +20,11 @@ internal sealed partial class HubForm
     private readonly CheckBox _amdManualConfirm = new() { Text = "I checked that my GPU is on AMD's Windows ROCm 7.2.1 list", Dock = DockStyle.Top, Height = 34, ForeColor = Muted, Visible = false };
     private readonly DarkButton _setupAmdButton = SetupButton("Install AMD ROCm");
     private bool _amdGpuSupported;
+    private bool _amdGpuDetected;
+    private bool _rocmInstallRunning;
     private bool _connectionSelectionUpdating;
     private bool AmdInstallEligible => Environment.OSVersion.Version.Build >= 22000
-        && (_amdGpuSupported || _amdManualConfirm.Checked);
+        && _amdGpuDetected && (_amdGpuSupported || _amdManualConfirm.Checked);
 
     private void InitializeIntegratedSetup()
     {
@@ -101,9 +103,23 @@ internal sealed partial class HubForm
                 MessageBox.Show(this, "Install the PC runtime first, then install AMD ROCm.", "PC runtime needed");
                 return;
             }
-            await RunSetupStepAsync("AMD ROCm setup", "Install-QproRocm.ps1",
-                "ROCm passed its GPU checks. Tongue inference and training will use it automatically.",
-                "You can now start tracking or train a personal model.");
+            if (!AmdInstallEligible)
+            {
+                MessageBox.Show(this, "AMD ROCm requires a supported AMD GPU. On an NVIDIA-only PC, use Install runtime for the NVIDIA/CUDA path.", "AMD GPU needed");
+                return;
+            }
+            _rocmInstallRunning = true;
+            try
+            {
+                await RunSetupStepAsync("AMD ROCm setup", "Install-QproRocm.ps1",
+                    "ROCm passed its GPU checks. Tongue inference and training will use it automatically.",
+                    "You can now start tracking or train a personal model.");
+            }
+            finally
+            {
+                _rocmInstallRunning = false;
+                UpdateSetupStepStyles();
+            }
         };
         UpdateConnectionModeUi();
         _ = DetectAmdGpuAsync();
@@ -156,7 +172,9 @@ internal sealed partial class HubForm
         return true;
     }
 
-    private bool RocmInstalled() => File.Exists(Path.Combine(_root, ".venv-rocm", "Scripts", "python.exe"));
+    private bool RocmEnvironmentExists() => File.Exists(Path.Combine(_root, ".venv-rocm", "Scripts", "python.exe"));
+    private bool RocmInstalled() => RocmEnvironmentExists()
+        && File.Exists(Path.Combine(_root, ".venv-rocm", "qpro-rocm-ready.json"));
 
     private async Task DetectAmdGpuAsync()
     {
@@ -169,7 +187,7 @@ internal sealed partial class HubForm
                 UseShellExecute = false, CreateNoWindow = true,
                 RedirectStandardOutput = true, RedirectStandardError = true,
             };
-            foreach (var arg in new[] { "-NoProfile", "-Command", "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name" })
+            foreach (var arg in new[] { "-NoProfile", "-Command", "Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name + '|' + $_.PNPDeviceID }" })
                 info.ArgumentList.Add(arg);
             using var process = new Process { StartInfo = info };
             if (!process.Start()) throw new InvalidOperationException("GPU query did not start");
@@ -182,7 +200,13 @@ internal sealed partial class HubForm
                 try { process.Kill(true); } catch { }
                 throw new TimeoutException("GPU query timed out");
             }
-            var names = (await output).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+            var controllers = (await output).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(line =>
+                {
+                    var separator = line.IndexOf('|');
+                    return (Name: separator < 0 ? line : line[..separator],
+                        PnpId: separator < 0 ? string.Empty : line[(separator + 1)..]);
+                }).ToArray();
             if (process.ExitCode != 0) throw new InvalidOperationException((await error).Trim());
             var supported = new[]
             {
@@ -190,25 +214,32 @@ internal sealed partial class HubForm
                 "Radeon RX 9060 XT", "Radeon RX 7900 XTX", "Radeon PRO W7900",
                 "Radeon RX 7700",
             };
-            var match = names.FirstOrDefault(name => supported.Any(model =>
-                System.Text.RegularExpressions.Regex.IsMatch(name.Trim(),
+            var match = controllers.FirstOrDefault(controller => supported.Any(model =>
+                System.Text.RegularExpressions.Regex.IsMatch(controller.Name.Trim(),
                     System.Text.RegularExpressions.Regex.Escape(model) + @"(?:\s*\([^)]*\))?\s*$",
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase)));
-            _amdGpuSupported = match is not null && Environment.OSVersion.Version.Build >= 22000;
-            _amdGpuStatus.Text = match is not null
-                ? _amdGpuSupported ? $"Supported AMD GPU detected: {match.Trim()}" : "AMD ROCm 7.2.1 requires Windows 11."
-                : names.Any(name => name.Contains("AMD", StringComparison.OrdinalIgnoreCase) || name.Contains("Radeon", StringComparison.OrdinalIgnoreCase))
+            _amdGpuDetected = controllers.Any(controller => controller.PnpId.Contains("VEN_1002", StringComparison.OrdinalIgnoreCase)
+                || controller.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
+                || controller.Name.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
+            _amdGpuSupported = match.Name is not null && Environment.OSVersion.Version.Build >= 22000;
+            _amdGpuStatus.Text = match.Name is not null
+                ? _amdGpuSupported ? $"Supported AMD GPU detected: {match.Name.Trim()}" : "AMD ROCm 7.2.1 requires Windows 11."
+                : _amdGpuDetected
                     ? "This AMD GPU is not listed for bundled ROCm 7.2.1; CPU runtime remains available."
-                    : "No supported AMD GPU detected. NVIDIA and CPU users can skip this step.";
+                    : controllers.Any(controller => controller.PnpId.Contains("VEN_10DE", StringComparison.OrdinalIgnoreCase)
+                        || controller.Name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
+                        ? "NVIDIA GPU detected. Use Install runtime for CUDA; AMD ROCm is unavailable."
+                        : "No AMD GPU detected. AMD ROCm is unavailable on this PC.";
         }
         catch (Exception error)
         {
             _amdGpuStatus.Text = "GPU detection unavailable. Check AMD's list, then confirm your model below.";
             AppendLog("GPU detection unavailable: " + error.Message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault());
             _amdGpuSupported = false;
+            _amdGpuDetected = false;
         }
         if (IsDisposed || Disposing) return;
-        _amdManualConfirm.Visible = !_amdGpuSupported && Environment.OSVersion.Version.Build >= 22000;
+        _amdManualConfirm.Visible = _amdGpuDetected && !_amdGpuSupported && Environment.OSVersion.Version.Build >= 22000;
         UpdateSetupStepStyles();
         SetSetupButtonsEnabled(true);
     }

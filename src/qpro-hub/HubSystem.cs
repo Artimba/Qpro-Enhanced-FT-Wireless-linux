@@ -51,10 +51,15 @@ internal sealed partial class HubForm
         _uninstallBridgeButton.Enabled = !_setupActionRunning && BridgeUninstallAvailable();
         StyleSetupStep(_setupGazeButton, _setupGazeStatus, "Prepare gaze", ready[2], next == 2);
         var rocmReady = RocmInstalled();
-        _setupAmdStatus.Text = rocmReady ? "● ROCm environment installed" :
-            AmdInstallEligible ? "● Available after PC runtime" : "○ Optional";
-        _setupAmdStatus.ForeColor = rocmReady ? Good : AmdInstallEligible ? Warning : Muted;
-        _setupAmdButton.Text = rocmReady ? "Repair AMD ROCm" : "Install AMD ROCm";
+        var rocmEnvironmentExists = RocmEnvironmentExists();
+        _setupAmdStatus.Text = _rocmInstallRunning ? "◌ Installing and verifying AMD ROCm…" :
+            rocmReady ? "● ROCm installed and GPU tests passed" :
+            rocmEnvironmentExists ? "○ ROCm environment found; verify or repair setup" :
+            AmdInstallEligible ? "○ Available after PC runtime" : "○ AMD GPU required";
+        _setupAmdStatus.ForeColor = _rocmInstallRunning || rocmEnvironmentExists && !rocmReady
+            ? Warning : rocmReady ? Good : AmdInstallEligible ? Warning : Muted;
+        _setupAmdButton.Text = rocmReady ? "Repair AMD ROCm" :
+            rocmEnvironmentExists ? "Verify / repair AMD ROCm" : "Install AMD ROCm";
         _setupAmdButton.OutlineColor = rocmReady ? Good : AmdInstallEligible && _setupPulseOn ? Accent : Border;
         _setupAmdButton.OutlineWidth = rocmReady || AmdInstallEligible && _setupPulseOn ? 2 : 1;
         _setupAmdButton.Enabled = !_setupActionRunning && AmdInstallEligible && BackendReady();

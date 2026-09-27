@@ -1,6 +1,6 @@
-# QproFaceTracking V2.0 — AMD/NVIDIA Wireless Edition
+# QproFaceTracking V2.0.2 — AMD/NVIDIA Wireless Edition
 
-Face-tracking tools for a **rooted Quest Pro** on Windows. V2.0 builds on [n0tmast3r's Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT) and adds wireless ADB support and an optional AMD ROCm path for tongue tracking and training. NVIDIA CUDA has also been live-tested and is functional; a CPU fallback remains available.
+Face-tracking tools for a **rooted Quest Pro** on Windows. V2.0.2 builds on [n0tmast3r's Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT) and includes wireless ADB support and an optional AMD ROCm path for tongue tracking and training. NVIDIA CUDA has also been live-tested and is functional; a CPU fallback remains available. V2.0.2 restores missing tongue training modules to the release ZIP and improves AMD ROCm setup status and GPU checks.
 
 **[Download the latest release](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases/latest)** · [Beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) · [Text setup instructions](RELEASE_INSTRUCTIONS.md) · [Detailed technical notes](RELEASE_README.md) · [Community Discord](https://discord.gg/ghvuJTpRu4)
 
@@ -19,7 +19,7 @@ Before changing your headset, compare its **exact model and firmware build** wit
 - Carries headset camera and eye data over USB or wireless ADB. Wireless ADB requires Magisk root access for Shell / ADB Shell and a trusted private network.
 - Runs the tongue model on AMD ROCm, NVIDIA CUDA, or CPU when the corresponding runtime is available. The Hub's Activity log reports the backend used.
 
-**Experimental relative pupil dilation** is included in V2.0 and has been live-tested in VRChat. It is an avatar animation estimate, not a calibrated pupil measurement.
+**Experimental relative pupil dilation** is included in V2.0.2 and has been live-tested in VRChat. It is an avatar animation estimate, not a calibrated pupil measurement.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ If Windows will not let you delete an older extracted Qpro folder, close its Hub
 
 The bundled tongue model and eye profile are **developer demonstrations**, so alignment and tongue detection may differ for another wearer. Quick refinement is a practical starting point. Personal captures, trained models, saved headset addresses, and generated eye patches are not included in the release ZIP. Camera captures are sensitive: share them only with the wearer's permission.
 
-**For this version, record and train a new tongue model even if you used an older Qpro release.** Keep old model exports as backups; importing one does not replace a new capture and training run. The [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) walks through the steps.
+**If you used a Qpro version before V2.0, record and train a new tongue model.** A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2. Keep older exports as backups; importing a pre-V2.0 model does not replace a new capture and training run. The [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) walks through the steps.
 
 This repository holds the editable source. Its release build also needs larger assets distributed with the ZIP. See [contributing](CONTRIBUTING.md), [third-party notices](THIRD_PARTY_NOTICES.md), and the [license](LICENSE) before redistributing changes. The [upstream README](UPSTREAM-README.md) retains the original project's notes, including older USB-oriented instructions.
 

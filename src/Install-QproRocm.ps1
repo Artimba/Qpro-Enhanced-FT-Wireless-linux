@@ -10,6 +10,20 @@ $qproRocmPython = Join-Path $qproRocmEnv 'Scripts\python.exe'
 $qproRequirements = Join-Path $QproRoot 'requirements-runtime.txt'
 $qproGateModel = Join-Path $QproRoot 'models\qpro-stereo-tongue-v8-gate.pt'
 $qproDirectionModel = Join-Path $QproRoot 'models\qpro-stereo-tongue-v8-direction.pt'
+$qproReadyMarker = Join-Path $qproRocmEnv 'qpro-rocm-ready.json'
+
+try {
+    $qproVideoControllers = @(Get-CimInstance Win32_VideoController -ErrorAction Stop)
+} catch {
+    throw "Could not verify an AMD GPU before installing ROCm. Check Windows Device Manager and retry. $($_.Exception.Message)"
+}
+$qproAmdGpu = $qproVideoControllers | Where-Object {
+    $_.PNPDeviceID -match 'VEN_1002' -or $_.Name -match '(?i)\bAMD\b|\bRadeon\b'
+} | Select-Object -First 1
+if ($null -eq $qproAmdGpu) {
+    throw 'AMD ROCm setup requires an AMD GPU. On an NVIDIA-only PC, use Install runtime for CUDA instead.'
+}
+Write-Host "AMD GPU detected: $($qproAmdGpu.Name)"
 
 . (Join-Path $QproRoot 'runtime-python.ps1')
 $qproBasePython = if (Test-QproPython312 $qproPrivatePython) {
@@ -22,6 +36,9 @@ if ([string]::IsNullOrWhiteSpace($qproBasePython)) {
 }
 if (-not (Test-Path -LiteralPath $qproRequirements)) {
     throw "The QproFaceTracking release was not found: $QproRoot"
+}
+if (Test-Path -LiteralPath $qproReadyMarker) {
+    Remove-Item -LiteralPath $qproReadyMarker -Force
 }
 $qproSiteCustomize = Join-Path $qproRocmEnv 'Lib\site-packages\sitecustomize.py'
 if (Test-Path -LiteralPath $qproSiteCustomize) {
@@ -99,5 +116,12 @@ if ($LASTEXITCODE -ne 0) { throw 'The Qpro tongue model failed a GPU training st
 & $qproRocmPython -c "import sys,numpy as np,torch; from tongue_model_preview import LiveTongueModelPreview; assert not torch.backends.cudnn.enabled; p=LiveTongueModelPreview(sys.argv[1],direction_checkpoint_path=sys.argv[2]); assert p.device.type=='cuda'; p.predict(np.zeros((400,800),dtype=np.uint8),None,[]); torch.cuda.synchronize(); print('GPU inference smoke test passed')" $qproGateModel $qproDirectionModel
 if ($LASTEXITCODE -ne 0) { throw 'The Qpro tongue model failed a GPU inference step.' }
 
+@{
+    schema = 1
+    rocmVersion = '7.2.1'
+    python = $qproRocmPython
+    gpu = $qproAmdGpu.Name
+    verifiedAtUtc = [DateTime]::UtcNow.ToString('o')
+} | ConvertTo-Json | Set-Content -LiteralPath $qproReadyMarker -Encoding UTF8
 Write-Host "ROCm runtime ready: $qproRocmPython"
 Write-Host 'Open QproFaceTracking.exe. Tongue tracking and training will select this ROCm runtime automatically.'

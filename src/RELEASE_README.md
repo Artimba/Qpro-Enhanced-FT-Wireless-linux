@@ -1,8 +1,10 @@
-# QproFaceTracking V2.0 — AMD/NVIDIA Wireless Edition
+# QproFaceTracking V2.0.2 — AMD/NVIDIA Wireless Edition
 
-This is a clean derivative of [Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT) v0.1.10-poc. V2.0 adds AMD ROCm for tongue-model tracking and training, while NVIDIA CUDA has also been live-tested and is functional. A CPU fallback remains available. It carries headset camera and eye data over USB or wireless ADB on a trusted Wi-Fi network. Independent gaze and relative pupil dilation remain experimental features. A rooted Quest Pro is required.
+This is a clean derivative of [Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT) v0.1.10-poc. V2.0 added AMD ROCm for tongue-model tracking and training, while NVIDIA CUDA has also been live-tested and is functional. A CPU fallback remains available. It carries headset camera and eye data over USB or wireless ADB on a trusted Wi-Fi network. Independent gaze and relative pupil dilation remain experimental features. A rooted Quest Pro is required.
 
-**Upgrading from an older version? Record and train a new tongue model in this version. Do not import an old tongue model as a substitute for retraining.** Keep older models as backups. See the [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) for the recording steps.
+V2.0.2 restores Python modules missing from the previous release ZIP, so Quick refinement and Full dataset tongue training can reach the model stages. The AMD installer now reports success only after its GPU checks pass, and it declines ROCm setup on an NVIDIA-only PC. A working V2.0 or V2.0.1 tongue model can be exported and imported into V2.0.2 without retraining.
+
+**Upgrading from a version before V2.0? Record and train a new tongue model.** Keep older models as backups. Working V2.0 and V2.0.1 models can be transferred through Model manager. See the [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) for the recording steps.
 
 **Required:** install the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) and let Steam finish updating it before installing Qpro's bridge.
 
@@ -81,6 +83,6 @@ The AMD setup downloads packages from `repo.radeon.com`; the original runtime se
 
 ## Changes from the upstream package
 
-The modified files include `build-and-run.ps1`, `receiver.py`, `pupil_dilation.py`, the combined VRCFaceTracking bridge, the tongue training scripts, `train_tongue_model.py`, `tongue_model_preview.py`, `native_raw_eye_probe.py`, and the Hub source. The Hub executable is rebuilt from this project's source so its setup and tracking checks accept the selected wireless ADB headset. The AMD runtime installer and wireless pair/connect/setup/launch/disable helpers are included. `SHA256SUMS.txt` lists the exact contents of the V2.0 ZIP.
+The modified files include `build-and-run.ps1`, `receiver.py`, `pupil_dilation.py`, the combined VRCFaceTracking bridge, the tongue training scripts, `train_tongue_model.py`, `tongue_model_preview.py`, `native_raw_eye_probe.py`, and the Hub source. The Hub executable is rebuilt from this project's source so its setup and tracking checks accept the selected wireless ADB headset. The AMD runtime installer and wireless pair/connect/setup/launch/disable helpers are included. `SHA256SUMS.txt` lists the exact contents of the V2.0.2 ZIP.
 
 This edition is not an official release of the upstream repository. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md).
