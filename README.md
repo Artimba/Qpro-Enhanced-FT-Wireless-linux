@@ -1,3 +1,5 @@
+Enter thy fork of fork. I need linux support for this, it shall be done.
+
 # QproFaceTracking — AMD/NVIDIA Wireless Edition
 
 Experimental face-tracking tools for a **rooted Quest Pro** on Windows. This edition builds on [n0tmast3r's Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT) and adds wireless ADB support and an optional AMD ROCm path for tongue tracking and training. The original NVIDIA CUDA and CPU paths remain in the code.
