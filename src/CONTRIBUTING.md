@@ -7,8 +7,11 @@ Do not submit raw inward-camera captures, extracted Meta binaries/models, person
 Before opening a pull request:
 
 1. From `src/`, run `python -m unittest discover -p "test_*.py"` in a Qpro Python environment.
-2. Build `src/qpro-hub/QproFaceTracking.Hub.csproj` in Release mode.
-3. Verify that Stop restores the stock eye model, disables tongue output, stops the relay, and clears ADB forwarding.
-4. Avoid expanding firmware support without a hardware test and exact build number.
+2. Run `dotnet run --project tests/steam-osc/SteamOscSourceTests.csproj -c Release` with the .NET 10 SDK.
+3. Build `qpro-hub/QproFaceTracking.Hub.csproj` in Release mode.
+4. Verify that Stop restores the stock eye model, disables tongue output, stops the relay, and clears ADB forwarding.
+5. Avoid expanding firmware support without a hardware test and exact build number.
+
+See [tests and diagnostics](tests/README.md) for the release ZIP checker and test scope.
 
 The GitHub source includes tests and build scripts. The runnable release ZIP omits source code, tests, private captures, and personal models. The combined VRCFT bridge must remain the single owner of final face state. Gaze and tongue additions must not overwrite stock jaw, lip, cheek, brow, or blink values.

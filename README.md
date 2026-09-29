@@ -14,7 +14,12 @@ The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/332
 
 ## Repository layout
 
-The runnable release keeps the Hub and guide in its main folder. This GitHub repository keeps the development source, tests, and build scripts together in [`src/`](src/). Run `src/build-release.ps1` from the source folder when building your own package; it needs the binary assets from an existing release or the original package.
+The runnable release keeps the Hub and guide in its main folder. This GitHub repository keeps the development source, tests, and build scripts together in [`src/`](src/). Building a package requires the .NET 10 SDK, an installed VRCFaceTracking, and the binary assets from an extracted Qpro release. In PowerShell, replace both example paths with paths on your PC:
+
+```powershell
+cd src
+.\build-release.ps1 -VrcftInstallDir '<your VRCFaceTracking install folder>' -AssetRoot '<extracted Qpro release>\QproRuntime'
+```
 
 For help, share relevant Hub **Activity** lines in the [community Discord](https://discord.gg/ghvuJTpRu4). The server is not owned by Fwooffy. QproFaceTracking is unaffiliated with Meta, Virtual Desktop, VRCFaceTracking, and VRChat.
 

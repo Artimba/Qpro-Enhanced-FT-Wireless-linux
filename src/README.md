@@ -4,7 +4,7 @@ Face-tracking tools for a **rooted Quest Pro** on Windows. V2.0.2 builds on [n0t
 
 **[Download the latest release](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases/latest)** · [Beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) · [Text setup instructions](RELEASE_INSTRUCTIONS.md) · [Detailed technical notes](RELEASE_README.md) · [Community Discord](https://discord.gg/ghvuJTpRu4)
 
-Download the **ZIP asset** from Releases and extract the entire folder. GitHub's automatically generated source archives do not include the runnable Hub, demonstration model, Android tools, or bundled Python installer.
+Download the **ZIP asset** from Releases and extract the entire folder. GitHub's automatically generated source archives do not include the runnable Hub, demonstration model, Android tools, or bundled private Python runtime.
 
 ## New to rooting a Quest Pro?
 
@@ -21,12 +21,14 @@ Before changing your headset, compare its **exact model and firmware build** wit
 
 **Experimental relative pupil dilation** is included in V2.0.2 and has been live-tested in VRChat. It is an avatar animation estimate, not a calibrated pupil measurement.
 
+An experimental **Steam Link face-tracking source** is being developed for a separate test build. The published V2.0.2 ZIP still uses Virtual Desktop. The test build's [text setup instructions](RELEASE_INSTRUCTIONS.md#steam-link-source-in-the-experimental-test-build) explain Steam Link OSC settings and its separate Qpro module install button. Steam Link face, blink, and mouth tracking worked after a headset restart, and Qpro's camera tongue override moved in VRChat; native Steam TongueOut still needs a live retest.
+
 ## Requirements
 
 - Windows 10 or 11, x64.
 - A rooted Quest Pro with eye and face tracking enabled, Developer Mode on, and an authorized ADB connection.
 - Magisk Superuser access granted to Shell / ADB Shell.
-- Virtual Desktop, SteamVR, and the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) for the tracking workflow. Let Steam finish updating it before installing the Qpro bridge.
+- Virtual Desktop (or Steam Link in the experimental test build), SteamVR, and the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) for the tracking workflow. Let Steam finish updating it before installing the Qpro module.
 - Internet access and free disk space for the PC runtime. The release bundles ADB, so a separate ADB installation is not needed for the Hub.
 
 The wireless transport and AMD inference were tested on a Quest Pro with build `51503870024400340` and a Radeon RX 7900 XTX. NVIDIA CUDA hardware has also been live-tested and is functional. Eye convergence can vary by firmware; a successful root or eye-camera connection does not establish convergence support on every build. If the Hub's independent-gaze patch fails, [Singularity's Quest Pro Independent Eye Gaze Magisk module](https://github.com/Lumince/singularity) is an alternative reported working on Horizon OS v2.7. Install Magisk OverlayFS first, then the gaze module through **Singularity > Apps/Modules > Magisk repo**; use only one gaze method at a time.
@@ -35,8 +37,8 @@ The wireless transport and AMD inference were tested on a Quest Pro with build `
 
 1. Extract the complete release ZIP. Open `QproFaceTracking.exe` from the extracted folder, not from inside the ZIP.
 2. In **First-time setup**, choose **USB cable** or **Wireless ADB (Wi-Fi)**. If you choose wireless, enter the Quest's IP and use the built-in connect or pairing controls. The Hub saves your choice and uses it for tracking.
-3. Use **Install runtime**. It creates a separate Qpro Python environment. If a compatible 64-bit Python 3.12 is already installed, setup can use it as the base without replacing its packages. On a supported AMD GPU, use **Install AMD ROCm** in the same page afterward; the Hub then selects that runtime automatically for tongue inference and training. NVIDIA and CPU users skip ROCm.
-4. Close VRCFaceTracking, use **Install bridge** in the Hub, then restart VRCFaceTracking.
+3. Use **Install runtime**. It prepares Qpro's own Python 3.12 and a separate tracking environment, whether Python is already installed on the PC or not. On a supported AMD GPU, use **Install AMD ROCm** in the same page afterward; the Hub then selects that runtime automatically for tongue inference and training. NVIDIA and CPU users skip ROCm.
+4. Close VRCFaceTracking and wait for its module process to exit. In the experimental test Hub, use **Install Virtual Desktop module** or **Install Steam Link module** for your selected source; installing one removes the other. Reopen VRCFaceTracking afterward. The published V2.0.2 ZIP keeps its original Virtual Desktop install button.
 5. For independent gaze, connect the rooted headset and use **Prepare gaze**. The Hub makes a temporary patch from your headset's own eye model.
 6. Start Virtual Desktop, SteamVR, and VRCFaceTracking. Confirm ordinary face tracking works, select the features you want in the Hub, then press **Start tracking**.
 7. When finished, press **Stop tracking** and wait for the Activity log to confirm cleanup.
@@ -49,11 +51,13 @@ If Windows will not let you delete an older extracted Qpro folder, close its Hub
 
 ## Models, data, and source
 
-The bundled tongue model and eye profile are **developer demonstrations**, so alignment and tongue detection may differ for another wearer. Quick refinement is a practical starting point. Personal captures, trained models, saved headset addresses, and generated eye patches are not included in the release ZIP. Camera captures are sensitive: share them only with the wearer's permission.
+The bundled tongue model and eye profile are **developer demonstrations**, so alignment and tongue detection may differ for another wearer. Quick refinement is a practical starting point. Personal captures, trained models, saved headset addresses, and generated eye patches are not included in the release ZIP. Camera captures are sensitive: share them only with the wearer's permission. Maintainers can use the source-only [developer tongue training guide](DEVELOPER_TONGUE_TRAINING.md) to evaluate a candidate against separate captures before considering it for a future release.
 
 **If you used a Qpro version before V2.0, record and train a new tongue model.** A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2. Keep older exports as backups; importing a pre-V2.0 model does not replace a new capture and training run. The [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) walks through the steps.
 
 This repository holds the editable source. Its release build also needs larger assets distributed with the ZIP. See [contributing](CONTRIBUTING.md), [third-party notices](THIRD_PARTY_NOTICES.md), and the [license](LICENSE) before redistributing changes. The [upstream README](UPSTREAM-README.md) retains the original project's notes, including older USB-oriented instructions.
+
+The Windows Hub is in [`qpro-hub/`](qpro-hub/), the VRCFaceTracking module in [`vrcft-gaze-bridge/`](vrcft-gaze-bridge/), and the Virtual Desktop label bridge in [`vd-label-bridge/`](vd-label-bridge/). Root-level Python and PowerShell files handle capture, calibration, training, and runtime setup. [`tests/`](tests/) contains mapping and package checks; root-level `test_*.py` files cover the Python modules. `build-release.ps1` creates the runnable ZIP, while `build-github-source.ps1` prepares the public source export. Generated builds and private captures stay out of the source export.
 
 ## Credits
 
