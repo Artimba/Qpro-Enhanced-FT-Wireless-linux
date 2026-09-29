@@ -4,27 +4,22 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-EXPECTED_PYTHON_SHA256 = "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb"
+EXPECTED_PYTHON_SHA256 = "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8"
 
 
 class ReleaseBootstrapTests(unittest.TestCase):
-    def test_bundled_python_installer_matches_pinned_hash(self) -> None:
-        installer = ROOT / "python-runtime" / "python-3.12.10-amd64.exe"
-        if not installer.is_file():
-            self.skipTest("The official Python installer is a release asset, not a Git-tracked source file")
-        self.assertEqual(hashlib.sha256(installer.read_bytes()).hexdigest(), EXPECTED_PYTHON_SHA256)
+    def test_bundled_python_archive_matches_pinned_hash(self) -> None:
+        archive = ROOT / "artifacts" / "python-package" / "python.3.12.10.nupkg"
+        if not archive.is_file():
+            self.skipTest("The official Python archive is a release asset, not a Git-tracked source file")
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), EXPECTED_PYTHON_SHA256)
 
     def test_runtime_setup_is_private_and_does_not_require_path_python(self) -> None:
         source = (ROOT / "setup-runtime.ps1").read_text(encoding="utf-8")
-        for setting in (
-            'InstallAllUsers=0',
-            'Include_launcher=0',
-            'AssociateFiles=0',
-            'PrependPath=0',
-            'AppendPath=0',
-        ):
-            self.assertIn(setting, source)
-        self.assertIn('python-runtime\\python-3.12.10-amd64.exe', source)
+        self.assertIn('Install-QproPrivatePython', source)
+        self.assertIn('ExtractToDirectory', source)
+        self.assertNotIn('Start-Process -FilePath $bundledPythonInstaller', source)
+        self.assertIn('python-runtime\\python.3.12.10.nupkg', source)
         self.assertIn(EXPECTED_PYTHON_SHA256, source)
         self.assertIn('runtime-ready.json', source)
         self.assertIn('Test-PythonCommand', source)
@@ -32,8 +27,8 @@ class ReleaseBootstrapTests(unittest.TestCase):
     def test_release_builder_and_self_test_require_the_bootstrap(self) -> None:
         builder = (ROOT / "build-release.ps1").read_text(encoding="utf-8")
         hub = "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "qpro-hub").glob("*.cs"))
-        self.assertIn('python-3.12.10-amd64.exe', builder)
-        self.assertIn('python-runtime\\\\python-3.12.10-amd64.exe', hub)
+        self.assertIn('python.3.12.10.nupkg', builder)
+        self.assertIn('python-runtime\\\\python.3.12.10.nupkg', hub)
         self.assertIn('runtime-ready.json', hub)
 
     def test_hub_has_setup_progress_and_actionable_gaze_preflight(self) -> None:

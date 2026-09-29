@@ -10,6 +10,7 @@ function Test-QproPython312([string]$Python) {
         $output = @(& $Python -c $check 2>$null)
         return $LASTEXITCODE -eq 0 -and $output.Count -gt 0 -and $output[-1].ToString().Trim() -eq 'QPRO_PYTHON312_OK'
     }
+    catch { return $false }
     finally { $ErrorActionPreference = $previousPreference }
 }
 
