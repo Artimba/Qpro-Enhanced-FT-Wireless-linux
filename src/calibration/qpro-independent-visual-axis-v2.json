@@ -2,7 +2,6 @@
   "format": "qpro-independent-personalized-visual-axis-v2",
   "created_unix_ns": 1786069764878123800,
   "source": "Seacliff node 18 local per-eye branch, Meta VisualAxisDetector personalization, and physically verified detector-tag ownership",
-  "refit_from": "C:\\Users\\theli\\Documents\\QproFaceTracking\\calibration\\qpro-independent-visual-axis-v1.json",
   "detector_tag_mapping": {
     "physical_left": "trace_tag_1",
     "physical_right": "trace_tag_0"
@@ -185,6 +184,5 @@
     "status": "partial_pass",
     "gaze_pass": true,
     "convergence_pass": false
-  },
-  "sample_path": "C:\\Users\\theli\\Documents\\QproFaceTracking\\calibration\\qpro-independent-visual-axis-v2.samples.jsonl"
+  }
 }

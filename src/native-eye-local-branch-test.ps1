@@ -51,6 +51,8 @@ if (-not (Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $pythonFa
     $python = $pythonFallback
 }
 $localModel = Join-Path $root "research\seacliff_eye_model\bolt-independent-axes.ptl"
+$modelManifest = Join-Path $root "research\seacliff_eye_model\bolt-independent-axes.manifest.json"
+$modelPreflight = Join-Path $root "prepare_eye_model.py"
 $remoteModel = "/data/local/tmp/qpro-seacliff-independent-axes.ptl"
 $targetModel = "/odm/etc/eyetracking/runtime/models/Seacliff_V1_5/fbnet/int8/experimental/bolt/bolt.ptl"
 $modelProperty = "persist.device_config.oculus_shared_vision.oculus_eyetracking_enable_experimental_model"
@@ -106,13 +108,59 @@ function Wait-TrackingService {
     throw "The headset tracking service did not return to running state."
 }
 
+function Read-PreparedModelPath {
+    if (-not (Test-Path -LiteralPath $modelManifest)) { return }
+    $manifest = Get-Content -LiteralPath $modelManifest -Raw | ConvertFrom-Json
+    $path = [string]$manifest.modelPath
+    if ($path -notmatch '^/odm/etc/eyetracking/runtime/models/[A-Za-z0-9_./-]+/bolt\.ptl$' -or $path.Contains('..')) {
+        throw "The prepared gaze manifest has an invalid headset model path. Prepare independent gaze again."
+    }
+    return $path
+}
+
+function Get-TargetMount {
+    $mountTable = Invoke-Root "cat /proc/mounts"
+    foreach ($line in ($mountTable -split "`r?`n")) {
+        $fields = $line -split '\s+'
+        if ($fields.Length -ge 2 -and $fields[1] -eq $targetModel) { return $line }
+    }
+    return ""
+}
+
+function Test-QproModelMount {
+    $mount = Get-TargetMount
+    if ([string]::IsNullOrWhiteSpace($mount)) { return $false }
+    # Identical bytes alone do not prove ownership: another Magisk module
+    # could mount a copy of the same patch. A Qpro bind mount shares the exact
+    # device and inode of our temporary source file.
+    $mountedIdentity = Invoke-Root "stat -c '%d:%i' '$targetModel'" -AllowFailure
+    $qproIdentity = Invoke-Root "stat -c '%d:%i' '$remoteModel'" -AllowFailure
+    if ($mountedIdentity -notmatch '^\d+:\d+$' -or $mountedIdentity -ne $qproIdentity) { return $false }
+    $mountedHash = ((Invoke-Root "sha256sum '$targetModel'" -AllowFailure) -split '\s+')[0].ToLowerInvariant()
+    $qproHash = ((Invoke-Root "sha256sum '$remoteModel'" -AllowFailure) -split '\s+')[0].ToLowerInvariant()
+    return ($mountedHash -match '^[0-9a-f]{64}$' -and $mountedHash -eq $qproHash)
+}
+
 function Restore-StockModel([string]$PropertyValue = "false") {
     Write-Host "HEADSET_TRACKING_RESTART phase=restore status=begin"
     Invoke-Root "stop trackingservice" -AllowFailure | Out-Null
-    Invoke-Root "setprop $modelProperty $PropertyValue" -AllowFailure | Out-Null
-    Invoke-Root "umount '$targetModel'" -AllowFailure | Out-Null
-    Invoke-Root "start trackingservice" -AllowFailure | Out-Null
+    try {
+        Invoke-Root "setprop $modelProperty $PropertyValue" -AllowFailure | Out-Null
+        Invoke-Root "umount '$targetModel'" -AllowFailure | Out-Null
+    }
+    finally {
+        # Always restart the Meta service, even when a headset command fails.
+        Invoke-Root "start trackingservice" -AllowFailure | Out-Null
+    }
     Wait-TrackingService
+    $remainingMount = Get-TargetMount
+    if (-not [string]::IsNullOrWhiteSpace($remainingMount)) {
+        throw "The temporary eye-model mount is still active after restore. Stock gaze was not confirmed; check Activity before starting tracking again."
+    }
+    $restoredProperty = Invoke-Root "getprop $modelProperty" -AllowFailure
+    if ($restoredProperty -ne $PropertyValue) {
+        throw "The headset eye-model property did not return to its original value ($PropertyValue). Stock gaze was not confirmed."
+    }
     Write-Host "HEADSET_TRACKING_RESTART phase=restore status=running"
     Invoke-Root "rm -f '$remoteModel'" -AllowFailure | Out-Null
 }
@@ -128,44 +176,67 @@ try {
         Write-Host "Independent-eye ADB target: $AdbTarget"
     }
 
+    $preparedPath = ""
+    try { $preparedPath = Read-PreparedModelPath }
+    catch {
+        if (-not ($RestoreOnly -or $RestoreIfActive)) { throw }
+        Write-Host "Prepared gaze manifest is invalid; checking the known Qpro mount path for cleanup."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($preparedPath)) { $targetModel = $preparedPath }
+
     if ($RestoreOnly) {
-        Restore-StockModel
-        Write-Host "Stock Meta eye model restored."
+        if (Test-QproModelMount) {
+            Restore-StockModel
+            Write-Host "Stock Meta eye model restored."
+        } elseif (-not [string]::IsNullOrWhiteSpace((Get-TargetMount))) {
+            throw "An eye-model mount remains, but it cannot be verified as Qpro's temporary mount. No headset tracking was changed. Remove the other module's mount through that module."
+        } else {
+            Write-Host "No verified Qpro temporary eye-model mount was found; headset tracking was not changed."
+        }
         exit 0
     }
     if ($RestoreIfActive) {
-        $existingMount = Invoke-Root "grep -F '$targetModel' /proc/mounts" -AllowFailure
-        $remoteHash = ((Invoke-Root "sha256sum '$targetModel'" -AllowFailure) -split "\s+")[0].ToLowerInvariant()
-        $localHash = if (Test-Path -LiteralPath $localModel) { (Get-FileHash -LiteralPath $localModel -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" }
-        if (-not [string]::IsNullOrWhiteSpace($existingMount) -and $localHash -ne "" -and $remoteHash -eq $localHash) {
+        if (Test-QproModelMount) {
             Restore-StockModel
             Write-Host "Recovered and removed the remaining Qpro temporary eye-model mount."
+        } elseif (-not [string]::IsNullOrWhiteSpace((Get-TargetMount))) {
+            throw "An eye-model mount remains, but it cannot be verified as Qpro's temporary mount. Stock gaze was not confirmed."
         } else {
             Write-Host "No remaining Qpro temporary eye-model mount was found; no tracking restart needed."
         }
         exit 0
     }
-    $existingMount = Invoke-Root "grep -F '$targetModel' /proc/mounts" -AllowFailure
+    $existingMount = Get-TargetMount
     if (-not [string]::IsNullOrWhiteSpace($existingMount)) {
-        throw "A temporary eye-model test is already active. Close its viewer with Q and wait for 'Stock Meta eye model restored.' If that process is gone, run this script with -RestoreOnly."
+        throw "An eye-model mount is already active. Close its viewer with Q and wait for restoration. If the Qpro process is gone, use -RestoreOnly to remove a verified Qpro mount; other modules must remove their own mount."
     }
     if (-not (Test-Path -LiteralPath $localModel)) {
         throw "Patched research model not found: $localModel"
     }
+    if (-not (Test-Path -LiteralPath $modelManifest)) {
+        throw "The prepared gaze manifest is missing. Use First-time setup to prepare independent gaze again."
+    }
+    if (-not (Test-Path -LiteralPath $modelPreflight)) {
+        throw "The gaze compatibility check is missing. Re-extract the complete Qpro release."
+    }
+    Write-Host "Checking prepared eye model and headset firmware before changing tracking..."
+    & $python $modelPreflight --check-prepared --adb $adb
+    if ($LASTEXITCODE -ne 0) {
+        throw "Independent gaze cannot start safely on this headset. See the compatibility reason above, then prepare independent gaze again if the headset was updated. No headset tracking was changed."
+    }
+    Write-Host "Prepared eye model matches this headset and supported tracking engine."
 
     $originalProperty = (Invoke-Root "getprop $modelProperty" -AllowFailure)
     if ([string]::IsNullOrWhiteSpace($originalProperty)) { $originalProperty = "false" }
     $cleanupNeeded = $false
     try {
-    # Clear a stale temporary override left by an interrupted earlier run.
-    Invoke-Root "umount '$targetModel'" -AllowFailure | Out-Null
     & $adb push $localModel $remoteModel | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Could not copy the research model to the headset." }
-    $cleanupNeeded = $true
     Invoke-Root "chown root:root '$remoteModel'" | Out-Null
     Invoke-Root "chmod 0644 '$remoteModel'" | Out-Null
     Invoke-Root "chcon u:object_r:vendor_configs_file:s0 '$remoteModel'" | Out-Null
     Invoke-Root "mount --bind '$remoteModel' '$targetModel'" | Out-Null
+    $cleanupNeeded = $true
 
     $localHash = (Get-FileHash -LiteralPath $localModel -Algorithm SHA256).Hash.ToLowerInvariant()
     $remoteHash = ((Invoke-Root "sha256sum '$targetModel'") -split "\s+")[0].ToLowerInvariant()
