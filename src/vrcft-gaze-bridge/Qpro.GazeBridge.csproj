@@ -23,6 +23,7 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../shared/EyebrowPreference.cs" Link="EyebrowPreference.cs" />
     <None Update="module.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
