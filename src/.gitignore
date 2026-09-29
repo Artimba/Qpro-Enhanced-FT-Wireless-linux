@@ -9,6 +9,7 @@ __pycache__/
 captures/
 training/
 config/wireless-headset.json
+config/hub-opened.txt
 research/seacliff_eye_model/*.ptl
 *.qpcap
 *.qplabel

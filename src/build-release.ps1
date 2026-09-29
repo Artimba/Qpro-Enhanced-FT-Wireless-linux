@@ -17,6 +17,9 @@ $distRoot = [System.IO.Path]::GetFullPath((Join-Path $root "dist"))
 $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $distRoot $releaseName))
 $runtimeRoot = Join-Path $releaseRoot "QproRuntime"
 $artifactRoot = [System.IO.Path]::GetFullPath((Join-Path $root "artifacts\release-$safeVersion"))
+$dotnet = if ($env:DOTNET_ROOT -and (Test-Path -LiteralPath (Join-Path $env:DOTNET_ROOT "dotnet.exe") -PathType Leaf)) {
+    Join-Path $env:DOTNET_ROOT "dotnet.exe"
+} else { "dotnet" }
 $restoreArgs = @(if ($NoRestore) { "--no-restore" })
 $assetRootResolved = if ([string]::IsNullOrWhiteSpace($AssetRoot)) { "" } else { [System.IO.Path]::GetFullPath($AssetRoot) }
 if ($assetRootResolved -and -not (Test-Path -LiteralPath $assetRootResolved -PathType Container)) {
@@ -36,13 +39,13 @@ New-Item -ItemType Directory -Force -Path $releaseRoot, $artifactRoot | Out-Null
 
 Write-Host "Publishing the self-contained Windows hub..."
 $hubPublish = Join-Path $artifactRoot "hub"
-& dotnet publish (Join-Path $root "qpro-hub\QproFaceTracking.Hub.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $hubPublish @restoreArgs
+& $dotnet publish (Join-Path $root "qpro-hub\QproFaceTracking.Hub.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $hubPublish @restoreArgs
 if ($LASTEXITCODE -ne 0) { throw "Publishing the Windows hub failed." }
 Copy-Item -LiteralPath (Join-Path $hubPublish "QproFaceTracking.Hub.exe") -Destination (Join-Path $releaseRoot "QproFaceTracking.exe")
 
 Write-Host "Publishing the self-contained label bridge..."
 $labelPublish = Join-Path $artifactRoot "label-bridge"
-& dotnet publish (Join-Path $root "vd-label-bridge\Qpro.VirtualDesktopLabelBridge.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $labelPublish @restoreArgs
+& $dotnet publish (Join-Path $root "vd-label-bridge\Qpro.VirtualDesktopLabelBridge.csproj") -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -o $labelPublish @restoreArgs
 if ($LASTEXITCODE -ne 0) { throw "Publishing the label bridge failed." }
 $labelDestination = Join-Path $runtimeRoot "vd-label-bridge\bin\Release\net10.0"
 New-Item -ItemType Directory -Force -Path $labelDestination | Out-Null
@@ -52,7 +55,7 @@ Write-Host "Building the combined VRCFT bridge..."
 $vrcftBuildArgs = @(if (-not [string]::IsNullOrWhiteSpace($VrcftInstallDir)) {
     "-p:VrcftInstallDir=$([System.IO.Path]::GetFullPath($VrcftInstallDir))"
 })
-& dotnet build (Join-Path $root "vrcft-gaze-bridge\Qpro.GazeBridge.csproj") -c Release @vrcftBuildArgs @restoreArgs
+& $dotnet build (Join-Path $root "vrcft-gaze-bridge\Qpro.GazeBridge.csproj") -c Release @vrcftBuildArgs @restoreArgs
 if ($LASTEXITCODE -ne 0) { throw "Building the combined VRCFT bridge failed." }
 $vrcftBinaryDestination = Join-Path $runtimeRoot "vrcft-gaze-bridge\bin\Release\net10.0"
 New-Item -ItemType Directory -Force -Path $vrcftBinaryDestination | Out-Null
@@ -62,6 +65,9 @@ function Copy-ReleaseFile([string]$RelativePath) {
     $source = Join-Path $root $RelativePath
     if (-not (Test-Path -LiteralPath $source) -and $assetRootResolved) {
         $source = Join-Path $assetRootResolved $RelativePath
+    }
+    if (-not (Test-Path -LiteralPath $source) -and $RelativePath -eq 'python-runtime\python.3.12.10.nupkg') {
+        $source = Join-Path $root 'artifacts\python-package\python.3.12.10.nupkg'
     }
     if (-not (Test-Path -LiteralPath $source)) { throw "Required release file is missing: $RelativePath" }
     $destination = Join-Path $runtimeRoot $RelativePath
@@ -85,10 +91,12 @@ $runtimeFiles = @(
     "setup-runtime.ps1",
     "runtime-python.ps1",
     "prepare-eye-model.ps1",
+    "prepare_eye_model.py",
     "train-latest-tongue-stills.ps1",
     "train-latest-tongue-refinement.ps1",
     "requirements-runtime.txt",
     "receiver.py",
+    "qpro_gpu.py",
     "pupil_dilation.py",
     "pupil_gaze_calibration.py",
     "capture_format.py",
@@ -150,9 +158,29 @@ foreach ($file in @("succeed.wav", "trainingComplete.wav", "warning.wav")) {
 foreach ($file in @("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "NOTICE.txt", "source.properties")) {
     Copy-ReleaseFile ("platform-tools\" + $file)
 }
-foreach ($file in @("python-3.12.10-amd64.exe", "LICENSE.txt", "README.txt")) {
+foreach ($file in @("python.3.12.10.nupkg", "README.txt")) {
     Copy-ReleaseFile ("python-runtime\" + $file)
 }
+$pythonArchivePath = Join-Path $runtimeRoot 'python-runtime\python.3.12.10.nupkg'
+$pythonArchiveHash = (Get-FileHash -LiteralPath $pythonArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($pythonArchiveHash -ne '0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8') {
+    throw 'The bundled Python NuGet archive failed its release integrity check.'
+}
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$pythonArchive = [System.IO.Compression.ZipFile]::OpenRead($pythonArchivePath)
+try {
+    $pythonLicense = $pythonArchive.GetEntry('tools/LICENSE.txt')
+    if ($null -eq $pythonLicense) { throw 'The Python archive is missing its license.' }
+    $pythonLicensePath = Join-Path $runtimeRoot 'python-runtime\LICENSE.txt'
+    $licenseInput = $pythonLicense.Open()
+    try {
+        $licenseOutput = [System.IO.File]::Create($pythonLicensePath)
+        try { $licenseInput.CopyTo($licenseOutput) }
+        finally { $licenseOutput.Dispose() }
+    }
+    finally { $licenseInput.Dispose() }
+}
+finally { $pythonArchive.Dispose() }
 $helpersRoot = Join-Path $releaseRoot "Helpers"
 New-Item -ItemType Directory -Force -Path $helpersRoot | Out-Null
 foreach ($launcher in @(
@@ -165,7 +193,7 @@ foreach ($launcher in @(
 Copy-Item -LiteralPath (Join-Path $root "RELEASE_HELPERS_README.md") -Destination (Join-Path $helpersRoot "README.md")
 $docsRoot = Join-Path $releaseRoot "Docs"
 New-Item -ItemType Directory -Force -Path $docsRoot | Out-Null
-foreach ($document in @("LICENSE", "THIRD_PARTY_NOTICES.md", "UPSTREAM-README.md")) {
+foreach ($document in @("LICENSE", "THIRD_PARTY_NOTICES.md", "UPSTREAM-README.md", "RELEASE_INSTRUCTIONS.md")) {
     $documentSource = Join-Path $root $document
     if (-not (Test-Path -LiteralPath $documentSource) -and $assetRootResolved) {
         $documentSource = Join-Path $assetRootResolved $document
@@ -196,6 +224,15 @@ $forbidden = @(
 )
 if ($forbidden.Count) { throw "Private/test artifacts entered the release: $($forbidden.FullName -join ', ')" }
 
+$userFolderMarker = ':' + [System.IO.Path]::DirectorySeparatorChar + 'Users' + [System.IO.Path]::DirectorySeparatorChar
+$textExtensions = @('.json', '.md', '.ps1', '.py', '.txt', '.cmd', '.cs', '.csproj', '.c')
+foreach ($file in Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | Where-Object Extension -In $textExtensions) {
+    $content = [System.IO.File]::ReadAllText($file.FullName).Replace('\\', '\')
+    if ($content.IndexOf($userFolderMarker, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "A personal Windows user path entered the release: $($file.FullName.Substring($releaseRoot.Length + 1))"
+    }
+}
+
 $hashLines = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File |
     Where-Object Name -ne "SHA256SUMS.txt" |
     Sort-Object FullName |
@@ -207,7 +244,50 @@ Set-Content -LiteralPath (Join-Path $releaseRoot "SHA256SUMS.txt") -Value $hashL
 
 $archive = "$releaseRoot.zip"
 if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
-Compress-Archive -LiteralPath $releaseRoot -DestinationPath $archive -CompressionLevel Optimal
+# ZIP entry names use '/' on every platform. Compress-Archive writes Windows
+# separators on some PowerShell versions, which breaks non-Windows extractors.
+$archiveStream = [System.IO.File]::Open($archive, [System.IO.FileMode]::CreateNew)
+try {
+    $zipWriter = [System.IO.Compression.ZipArchive]::new(
+        $archiveStream, [System.IO.Compression.ZipArchiveMode]::Create, $true
+    )
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | Sort-Object FullName) {
+            $relative = $file.FullName.Substring($distRoot.Length + 1).Replace('\', '/')
+            $entry = $zipWriter.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)
+            $inputStream = [System.IO.File]::OpenRead($file.FullName)
+            try {
+                $outputStream = $entry.Open()
+                try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+            } finally {
+                $inputStream.Dispose()
+            }
+        }
+    } finally {
+        $zipWriter.Dispose()
+    }
+} finally {
+    $archiveStream.Dispose()
+}
+
+$releaseZip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+try {
+    $archiveNames = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($archiveEntry in $releaseZip.Entries) {
+        [void]$archiveNames.Add($archiveEntry.FullName.Replace('\', '/'))
+    }
+    $missingArchiveFiles = @(
+        @($runtimeFiles) + @('python-runtime\python.3.12.10.nupkg', 'python-runtime\LICENSE.txt', 'python-runtime\README.txt') | Where-Object {
+            $entry = "$releaseName/QproRuntime/$($_.Replace('\', '/'))"
+            -not $archiveNames.Contains($entry)
+        }
+    )
+    if ($missingArchiveFiles.Count) {
+        throw "Required runtime files are missing from the ZIP: $($missingArchiveFiles -join ', ')"
+    }
+} finally {
+    $releaseZip.Dispose()
+}
 
 $releaseZip = [System.IO.Compression.ZipFile]::OpenRead($archive)
 try {

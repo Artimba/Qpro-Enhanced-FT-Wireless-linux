@@ -49,11 +49,15 @@ $sourceFiles = @(
     "uninstall-vrcft-eye-bridge.ps1",
     "setup-runtime.ps1",
     "runtime-python.ps1",
+    "test_runtime_python_discovery.ps1",
     "prepare-eye-model.ps1",
+    "prepare_eye_model.py",
     "train-latest-tongue-stills.ps1",
     "train-latest-tongue-refinement.ps1",
     "requirements-runtime.txt",
+    "python-runtime\README.txt",
     "receiver.py",
+    "qpro_gpu.py",
     "pupil_dilation.py",
     "capture_format.py",
     "calibration.py",
@@ -62,6 +66,7 @@ $sourceFiles = @(
     "label_capture.py",
     "tongue_model_preview.py",
     "train_tongue_model.py",
+    "developer_tongue_training.py",
     "tongue_visibility_calibration.py",
     "train_model.py",
     "prepare_tongue_stills.py",
@@ -95,8 +100,8 @@ $sourceFiles = @(
     "vd-label-bridge\Qpro.VirtualDesktopLabelBridge.csproj",
     "vd-label-bridge\Program.cs",
     "vrcft-gaze-bridge\Qpro.GazeBridge.csproj",
-    "vrcft-gaze-bridge\TrackingModule.cs",
     "vrcft-gaze-bridge\module.json",
+    "shared\EyebrowPreference.cs",
     "LICENSE",
     "CONTRIBUTING.md",
     "SECURITY.md",
@@ -105,14 +110,30 @@ $sourceFiles = @(
     "RELEASE_README.md",
     "RELEASE_INSTRUCTIONS.md",
     "RELEASE_HELPERS_README.md",
+    "DEVELOPER_TONGUE_TRAINING.md",
     "Quest_Pro_Enhanced_Face_Tracking_Guide.pdf",
     "THIRD_PARTY_NOTICES.md",
     "UPSTREAM-README.md",
-    "release-manifest.json"
+    "release-manifest.json",
+    "tests\README.md",
+    "tests\check-release-zip.py",
+    "tests\adb-server-readonly.py",
+    "tests\live-smirk-vd.ps1",
+    "tests\steam-osc\SteamOscSourceTests.csproj",
+    "tests\hub-datasets\HubDatasetTests.csproj"
 )
 foreach ($file in $sourceFiles) { Copy-SourceFile $file }
 foreach ($hubSource in Get-ChildItem -LiteralPath (Join-Path $root "qpro-hub") -File -Filter "*.cs") {
     Copy-SourceFile ("qpro-hub\" + $hubSource.Name)
+}
+foreach ($bridgeSource in Get-ChildItem -LiteralPath (Join-Path $root "vrcft-gaze-bridge") -File -Filter "*.cs") {
+    Copy-SourceFile ("vrcft-gaze-bridge\" + $bridgeSource.Name)
+}
+foreach ($testSource in Get-ChildItem -LiteralPath (Join-Path $root "tests\steam-osc") -File -Filter "*.cs") {
+    Copy-SourceFile ("tests\steam-osc\" + $testSource.Name)
+}
+foreach ($testSource in Get-ChildItem -LiteralPath (Join-Path $root "tests\hub-datasets") -File -Filter "*.cs") {
+    Copy-SourceFile ("tests\hub-datasets\" + $testSource.Name)
 }
 $exportedReleaseReadme = Join-Path $sourceRoot "RELEASE_README.md"
 $releaseGuide = Get-Content -LiteralPath $exportedReleaseReadme -Raw
@@ -132,6 +153,15 @@ $forbidden = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Objec
     $_.FullName -match '\\(__pycache__|captures|training|seacliff_eye_model)\\'
 }
 if ($forbidden.Count) { throw "Binary/private artifacts entered the GitHub source export: $($forbidden.FullName -join ', ')" }
+
+$userFolderMarker = ':' + [System.IO.Path]::DirectorySeparatorChar + 'Users' + [System.IO.Path]::DirectorySeparatorChar
+$textExtensions = @('.json', '.md', '.ps1', '.py', '.txt', '.cmd', '.cs', '.csproj', '.c')
+foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object Extension -In $textExtensions) {
+    $content = [System.IO.File]::ReadAllText($file.FullName).Replace('\\', '\')
+    if ($content.IndexOf($userFolderMarker, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "A personal Windows user path entered the source export: $($file.FullName.Substring($sourceRoot.Length + 1))"
+    }
+}
 
 Write-Host "GITHUB_SOURCE_READY folder=$sourceRoot"
 Write-Host "The export contains the source tree; place its contents under src/ in the repository."
