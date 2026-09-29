@@ -25,6 +25,18 @@ from research.patch_seacliff_independent_axes import patch
 
 MODEL_ROOT = "/odm/etc/eyetracking/runtime/models"
 ENGINE_PATH = "/odm/lib64/libtrackingengines.so"
+MODEL_FAMILY = f"{MODEL_ROOT}/Seacliff_V1_5/fbnet/int8"
+# native-eye-local-branch-test.ps1 enables Meta's experimental-model property
+# before restarting trackingservice, then bind-mounts its patch at this path.
+# The ordinary and vPrevious files can coexist on the same firmware build.
+EXPERIMENTAL_MODEL_PATH = f"{MODEL_FAMILY}/experimental/bolt/bolt.ptl"
+KNOWN_MODEL_PATHS = frozenset(
+    {
+        f"{MODEL_FAMILY}/bolt/bolt.ptl",
+        EXPERIMENTAL_MODEL_PATH,
+        f"{MODEL_FAMILY}/vPrevious/bolt/bolt.ptl",
+    }
+)
 PATCHED_NAME = "bolt-independent-axes.ptl"
 MANIFEST_NAME = "bolt-independent-axes.manifest.json"
 OUTPUT_DIR = Path(__file__).resolve().parent / "research" / "seacliff_eye_model"
@@ -199,17 +211,22 @@ def _discover_model(client: AdbClient) -> str:
     candidates = sorted({line.strip() for line in output.splitlines() if line.strip()})
     if not candidates:
         raise PreparationError("No stock bolt.ptl eye model was found under the headset's ODM models directory.")
-    if len(candidates) != 1:
-        raise PreparationError(
-            "More than one bolt.ptl eye model was found; firmware selection is ambiguous: "
-            + ", ".join(candidates)
-        )
-    path = candidates[0]
-    if not MODEL_PATH_RE.fullmatch(path) or ".." in path.split("/"):
-        raise PreparationError(
-            f"The discovered eye model path is outside the supported Seacliff_V1_5 layout: {path}"
-        )
-    return path
+    for path in candidates:
+        if not MODEL_PATH_RE.fullmatch(path) or ".." in path.split("/"):
+            raise PreparationError(
+                f"The discovered eye model path is outside the supported Seacliff_V1_5 layout: {path}"
+            )
+    if len(candidates) == 1:
+        # Retain support for older layouts with one unambiguous model path.
+        return candidates[0]
+    if EXPERIMENTAL_MODEL_PATH in candidates and set(candidates) <= KNOWN_MODEL_PATHS:
+        # The launcher explicitly selects this branch. Choosing the ordinary
+        # or vPrevious model here would patch different bytes than it mounts.
+        return EXPERIMENTAL_MODEL_PATH
+    raise PreparationError(
+        "More than one bolt.ptl eye model was found; firmware selection is ambiguous: "
+        + ", ".join(candidates)
+    )
 
 
 def _is_mounted(client: AdbClient, model_path: str) -> bool:

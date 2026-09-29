@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -17,18 +18,20 @@ from prepare_eye_model import (
     AdbClient,
     ENGINE_PATH,
     ENGINE_PROFILES,
+    EXPERIMENTAL_MODEL_PATH,
     MANIFEST_NAME,
     MODEL_ROOT,
     PATCHED_NAME,
     PreparationError,
+    _discover_model,
     check_prepared,
     prepare,
 )
 
 
-MODEL_PATH = (
-    f"{MODEL_ROOT}/Seacliff_V1_5/fbnet/int8/experimental/bolt/bolt.ptl"
-)
+MODEL_PATH = EXPERIMENTAL_MODEL_PATH
+STANDARD_MODEL_PATH = f"{MODEL_ROOT}/Seacliff_V1_5/fbnet/int8/bolt/bolt.ptl"
+PREVIOUS_MODEL_PATH = f"{MODEL_ROOT}/Seacliff_V1_5/fbnet/int8/vPrevious/bolt/bolt.ptl"
 
 
 def stock_archive() -> bytes:
@@ -122,12 +125,33 @@ class PrepareEyeModelTests(unittest.TestCase):
         self.assertEqual(check_prepared(self.quest, self.output_dir), manifest)
 
     def test_rejects_ambiguous_discovery_without_writing_model(self):
-        self.quest.model_paths.append(
-            f"{MODEL_ROOT}/Seacliff_V1_5/other/bolt/bolt.ptl"
-        )
+        self.quest.model_paths = [STANDARD_MODEL_PATH, PREVIOUS_MODEL_PATH]
         with self.assertRaisesRegex(PreparationError, "ambiguous"):
             prepare(self.quest, self.output_dir)
         self.assertFalse((self.output_dir / PATCHED_NAME).exists())
+
+    def test_selects_experimental_target_from_three_firmware_models(self):
+        # Current Seacliff builds contain normal, experimental, and vPrevious
+        # models. Qpro enables the experimental branch when applying its patch.
+        self.quest.model_paths = [PREVIOUS_MODEL_PATH, STANDARD_MODEL_PATH, MODEL_PATH]
+        manifest = prepare(self.quest, self.output_dir)
+        self.assertEqual(manifest["modelPath"], MODEL_PATH)
+        self.assertEqual(check_prepared(self.quest, self.output_dir), manifest)
+
+    def test_rejects_unknown_extra_branch_even_with_experimental_model(self):
+        self.quest.model_paths = [MODEL_PATH, f"{MODEL_ROOT}/Seacliff_V1_5/other/bolt/bolt.ptl"]
+        with self.assertRaisesRegex(PreparationError, "ambiguous"):
+            prepare(self.quest, self.output_dir)
+
+    def test_single_legacy_model_path_stays_eligible(self):
+        self.quest.model_paths = [STANDARD_MODEL_PATH]
+        self.assertEqual(_discover_model(self.quest), STANDARD_MODEL_PATH)
+
+    def test_discovery_target_matches_headset_launcher(self):
+        launcher = (Path(__file__).parent / "native-eye-local-branch-test.ps1").read_text(encoding="utf-8")
+        match = re.search(r'^\$targetModel = "([^"]+)"', launcher, flags=re.MULTILINE)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), EXPERIMENTAL_MODEL_PATH)
 
     def test_rejects_changed_engine_hash(self):
         self.quest.engine_hash = "a" * 64
