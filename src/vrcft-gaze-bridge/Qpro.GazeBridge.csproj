@@ -5,6 +5,10 @@
     <Nullable>enable</Nullable>
     <Platforms>x64</Platforms>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <!-- The module ZIP ships the DLL without its PDB. A portable PDB leaves an absolute path in the DLL's debug record. -->
+    <DebugType>None</DebugType>
+  </PropertyGroup>
   <Target Name="CheckVrcftInstall" BeforeTargets="ResolveReferences" Condition="'$(VrcftInstallDir)' == ''">
     <Error Text="Pass -p:VrcftInstallDir=&lt;your Steam VRCFaceTracking folder&gt; when building the bridge." />
   </Target>

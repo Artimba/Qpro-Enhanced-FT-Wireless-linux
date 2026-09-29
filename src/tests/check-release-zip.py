@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import re
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -48,6 +49,17 @@ def main() -> None:
             content = archive.read(name).replace(bytes((92, 92)), bytes((92,))).lower()
             if user_path_marker in content:
                 raise SystemExit(f"Personal Windows user path in packaged file: {name}")
+        # Portable PDBs can put a local absolute path in the DLL's PE debug
+        # record even when no .pdb file is included in the release.
+        binary_user_path = re.compile(rb"[a-z]:[\\/]+users[\\/]+", re.IGNORECASE)
+        for name in sorted(files):
+            with archive.open(name) as stream:
+                overlap = b""
+                while chunk := stream.read(64 * 1024):
+                    content = overlap + chunk.replace(b"\x00", b"")
+                    if binary_user_path.search(content):
+                        raise SystemExit(f"Personal Windows user path in packaged binary: {name}")
+                    overlap = content[-64:]
         local_modules = {path.stem for path in Path(__file__).resolve().parents[1].glob("*.py")}
         runtime_prefix = f"{root}/QproRuntime/"
         packaged_modules = {

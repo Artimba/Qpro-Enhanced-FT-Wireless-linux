@@ -57,7 +57,7 @@ Write-Host "Building the combined VRCFT bridge..."
 $vrcftBuildArgs = @(if (-not [string]::IsNullOrWhiteSpace($VrcftInstallDir)) {
     "-p:VrcftInstallDir=$([System.IO.Path]::GetFullPath($VrcftInstallDir))"
 })
-& $dotnet build (Join-Path $root "vrcft-gaze-bridge\Qpro.GazeBridge.csproj") -c Release @vrcftBuildArgs @restoreArgs
+& $dotnet build (Join-Path $root "vrcft-gaze-bridge\Qpro.GazeBridge.csproj") -c Release -p:DebugType=None @vrcftBuildArgs @restoreArgs
 if ($LASTEXITCODE -ne 0) { throw "Building the combined VRCFT bridge failed." }
 $vrcftBinaryDestination = Join-Path $runtimeRoot "vrcft-gaze-bridge\bin\Release\net10.0"
 New-Item -ItemType Directory -Force -Path $vrcftBinaryDestination | Out-Null
@@ -272,6 +272,27 @@ foreach ($file in Get-ChildItem -LiteralPath $releaseRoot -Recurse -File | Where
     if ($content.IndexOf($userFolderMarker, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "A personal Windows user path entered the release: $($file.FullName.Substring($releaseRoot.Length + 1))"
     }
+}
+
+# A .NET DLL can contain an absolute PDB path even when the PDB itself is not
+# packaged. Scan every file in chunks so large executables stay cheap.
+$userPathPattern = [regex]::new('(?i)[a-z]:[\\/]+users[\\/]+')
+foreach ($file in Get-ChildItem -LiteralPath $releaseRoot -Recurse -File) {
+    $stream = [System.IO.File]::OpenRead($file.FullName)
+    try {
+        $buffer = [byte[]]::new(65536)
+        $overlap = ''
+        while (($count = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $chunk = $overlap + [System.Text.Encoding]::ASCII.GetString($buffer, 0, $count)
+            # This also catches UTF-16 paths, whose ASCII bytes are separated by NULs.
+            $chunk = $chunk.Replace([string][char]0, '')
+            if ($userPathPattern.IsMatch($chunk)) {
+                throw "A personal Windows user path entered a release binary: $($file.FullName.Substring($releaseRoot.Length + 1))"
+            }
+            $overlap = $chunk.Substring([Math]::Max(0, $chunk.Length - 64))
+        }
+    }
+    finally { $stream.Dispose() }
 }
 
 $hashLines = Get-ChildItem -LiteralPath $releaseRoot -Recurse -File |
