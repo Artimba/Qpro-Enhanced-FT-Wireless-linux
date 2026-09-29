@@ -10,4 +10,7 @@
     <RootNamespace>QproFaceTracking.Hub</RootNamespace>
     <Version>2.0.2</Version>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../shared/EyebrowPreference.cs" Link="EyebrowPreference.cs" />
+  </ItemGroup>
 </Project>

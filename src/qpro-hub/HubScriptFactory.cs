@@ -24,22 +24,26 @@ internal sealed class HubScriptFactory
             UseShellExecute = false,
             CreateNoWindow = hidden,
         };
-        foreach (var value in new[] { "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath }.Concat(arguments))
+        foreach (var value in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath }.Concat(arguments))
             info.ArgumentList.Add(value);
 
-        // Setup must inspect and repair the shared Python environment itself.
-        var python = _environment.FindPythonRuntime();
-        if (python is not null && !script.Equals("setup-runtime.ps1", StringComparison.OrdinalIgnoreCase))
-            info.Environment["QPRO_PYTHON"] = python;
-        var adb = _environment.FindAdb();
-        if (adb is not null) info.Environment["QPRO_ADB"] = adb;
-        info.Environment.Remove("ANDROID_SERIAL");
-        info.Environment.Remove("QPRO_ADB_TARGET");
-        var target = _environment.GetConfiguredAdbTarget();
-        if (!string.IsNullOrWhiteSpace(target))
+        // PC setup has no headset dependency. Avoid probing the existing
+        // runtime and ADB configuration before the setup process can report
+        // its own progress (especially when the existing runtime is damaged).
+        if (!script.Equals("setup-runtime.ps1", StringComparison.OrdinalIgnoreCase))
         {
-            info.Environment["ANDROID_SERIAL"] = target;
-            info.Environment["QPRO_ADB_TARGET"] = target;
+            var python = _environment.FindPythonRuntime();
+            if (python is not null) info.Environment["QPRO_PYTHON"] = python;
+            var adb = _environment.FindAdb();
+            if (adb is not null) info.Environment["QPRO_ADB"] = adb;
+            info.Environment.Remove("ANDROID_SERIAL");
+            info.Environment.Remove("QPRO_ADB_TARGET");
+            var target = _environment.GetConfiguredAdbTarget();
+            if (!string.IsNullOrWhiteSpace(target))
+            {
+                info.Environment["ANDROID_SERIAL"] = target;
+                info.Environment["QPRO_ADB_TARGET"] = target;
+            }
         }
         return info;
     }

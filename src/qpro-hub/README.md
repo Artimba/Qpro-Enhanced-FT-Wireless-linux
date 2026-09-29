@@ -4,9 +4,9 @@ This is the native Windows control app for the Quest Pro tracking package. The H
 
 ## Pages
 
-- **Live tracking:** connection status; independent gaze, tongue, and experimental relative pupil controls; persistent Apply and Stop buttons.
-- **First-time setup:** USB/Wi-Fi connection selection and wireless enable, connect, and pairing controls; PC runtime, optional AMD ROCm installer, combined VRCFaceTracking bridge, and gaze preparation.
-- **Tongue personalization:** quick refinement and full dataset capture and training.
+- **Live tracking:** connection status; independent gaze, tongue, individual cheek puff and suck controls, eyebrow response, and experimental relative pupil controls; persistent Start and Stop buttons.
+- **First-time setup:** USB/Wi-Fi connection selection and wireless enable, connect, and pairing controls; PC runtime, optional AMD ROCm installer, separate Virtual Desktop and Steam Link Qpro VRCFaceTracking module buttons, and gaze preparation. Installing one source module removes the other.
+- **Tongue personalization:** quick refinement, focused diagonal and facial-hair capture, and full dataset capture. Each has a separate dataset queue and trains a new personal model.
 - **Model manager:** rename, export, import, and delete personal tongue models.
 - **Activity:** setup, training, tracking, and error output.
 

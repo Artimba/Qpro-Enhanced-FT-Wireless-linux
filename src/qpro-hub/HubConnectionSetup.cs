@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Text.Json;
 
 namespace QproFaceTracking.Hub;
 
@@ -17,25 +18,33 @@ internal sealed partial class HubForm
     private readonly DarkButton _disableWirelessButton = SetupButton("Disable Wi-Fi ADB");
     private readonly Label _setupAmdStatus = SetupStatusLabel();
     private readonly Label _amdGpuStatus = new() { AutoSize = true, ForeColor = Muted, Margin = new Padding(5, 3, 5, 8), Tag = "responsive-info" };
-    private readonly CheckBox _amdManualConfirm = new() { Text = "I checked that my GPU is on AMD's Windows ROCm 7.2.1 list", Dock = DockStyle.Top, Height = 34, ForeColor = Muted, Visible = false };
     private readonly DarkButton _setupAmdButton = SetupButton("Install AMD ROCm");
     private bool _amdGpuSupported;
+    private bool _amdGpuLegacyEligible;
+    private string? _amdGpuLatestTarget;
     private bool _amdGpuDetected;
     private bool _rocmInstallRunning;
     private bool _connectionSelectionUpdating;
     private bool AmdInstallEligible => Environment.OSVersion.Version.Build >= 22000
-        && _amdGpuDetected && (_amdGpuSupported || _amdManualConfirm.Checked);
+        && _amdGpuSupported;
 
     private void InitializeIntegratedSetup()
     {
         _setupAmdButton.Enabled = false;
-        _amdManualConfirm.CheckedChanged += (_, _) => SetSetupButtonsEnabled(true);
         _connectionMode.Items.AddRange(["USB cable", "Wireless ADB (Wi-Fi)"]);
         _connectionMode.SelectedIndex = _environment.WirelessSelected ? 1 : 0;
         _wirelessAddress.Text = _environment.GetSavedWirelessTarget() ?? "";
         _connectionMode.SelectedIndexChanged += async (_, _) =>
         {
             if (_connectionSelectionUpdating) return;
+            if (_setupActionRunning || _utilityActionRunning || _datasetOperationBusy ||
+                _starting || _stopping || _trackingProcesses.Any(process => !process.HasExited))
+            {
+                _connectionSelectionUpdating = true;
+                try { _connectionMode.SelectedIndex = _environment.WirelessSelected ? 1 : 0; }
+                finally { _connectionSelectionUpdating = false; }
+                return;
+            }
             try
             {
                 _environment.SelectConnection(_connectionMode.SelectedIndex == 1);
@@ -105,14 +114,19 @@ internal sealed partial class HubForm
             }
             if (!AmdInstallEligible)
             {
-                MessageBox.Show(this, "AMD ROCm requires a supported AMD GPU. On an NVIDIA-only PC, use Install runtime for the NVIDIA/CUDA path.", "AMD GPU needed");
+                MessageBox.Show(this, "AMD ROCm requires an eligible discrete Radeon GPU on Windows 11. On an NVIDIA-only PC, use Install runtime for the NVIDIA/CUDA path.", "AMD GPU needed");
                 return;
             }
+            if (MessageBox.Show(this,
+                    "ROCm 10.0 is AMD's current stable package series, but this Qpro integration is experimental. The download is large. Setup tests GPU training and model inference before enabling it. If those checks fail, an existing ROCm 7.2.1 installation remains available on eligible cards; Qpro can also use its PC runtime.\n\nInstall ROCm 10.0 on this PC?",
+                    "Install ROCm 10.0", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
             _rocmInstallRunning = true;
             try
             {
-                await RunSetupStepAsync("AMD ROCm setup", "Install-QproRocm.ps1",
-                    "ROCm passed its GPU checks. Tongue inference and training will use it automatically.",
+                await RunSetupStepAsync("AMD ROCm 10.0 setup", "Install-QproRocm.ps1",
+                    "ROCm 10.0 passed its GPU checks. Tongue inference and training will use it automatically.",
                     "You can now start tracking or train a personal model.");
             }
             finally
@@ -154,7 +168,7 @@ internal sealed partial class HubForm
 
     private async Task<bool> RunConnectionStepAsync(string label, string script, params string[] args)
     {
-        BeginSetupProgress(label);
+        if (!TryBeginSetupProgress(label)) return false;
         var succeeded = await RunUtilityAsync(label, script, args);
         FinishSetupProgress(succeeded, label);
         if (!succeeded) return false;
@@ -172,13 +186,55 @@ internal sealed partial class HubForm
         return true;
     }
 
-    private bool RocmEnvironmentExists() => File.Exists(Path.Combine(_root, ".venv-rocm", "Scripts", "python.exe"));
-    private bool RocmInstalled() => RocmEnvironmentExists()
-        && File.Exists(Path.Combine(_root, ".venv-rocm", "qpro-rocm-ready.json"));
+    private string LatestRocmEnvironmentPath() => Path.Combine(_root, ".venv-rocm-experimental");
+    private string LegacyRocmEnvironmentPath() => Path.Combine(_root, ".venv-rocm");
+    private bool LatestRocmEnvironmentExists() => File.Exists(Path.Combine(LatestRocmEnvironmentPath(), "Scripts", "python.exe"));
+    private bool LegacyRocmEnvironmentExists() => File.Exists(Path.Combine(LegacyRocmEnvironmentPath(), "Scripts", "python.exe"));
+    private bool LatestRocmInstalled()
+    {
+        var marker = Path.Combine(LatestRocmEnvironmentPath(), "qpro-rocm-ready.json");
+        if (!LatestRocmEnvironmentExists() || !File.Exists(marker) || _amdGpuLatestTarget is null) return false;
+        try
+        {
+            using var ready = JsonDocument.Parse(File.ReadAllText(marker));
+            return ready.RootElement.TryGetProperty("schema", out var schema)
+                && schema.GetInt32() == 1
+                && ready.RootElement.TryGetProperty("supportTier", out var tier)
+                && tier.GetString() == "experimental-rocm-10"
+                && ready.RootElement.TryGetProperty("rocmVersion", out var version)
+                && version.GetString()?.StartsWith("10.0", StringComparison.Ordinal) == true
+                && ready.RootElement.TryGetProperty("gfxTarget", out var target)
+                && string.Equals(target.GetString(), _amdGpuLatestTarget, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
+        {
+            return false;
+        }
+    }
+
+    private bool LegacyRocmInstalled()
+    {
+        var marker = Path.Combine(LegacyRocmEnvironmentPath(), "qpro-rocm-ready.json");
+        if (!_amdGpuLegacyEligible || !LegacyRocmEnvironmentExists() || !File.Exists(marker)) return false;
+        try
+        {
+            using var ready = JsonDocument.Parse(File.ReadAllText(marker));
+            return ready.RootElement.TryGetProperty("schema", out var schema)
+                && schema.GetInt32() == 1
+                && ready.RootElement.TryGetProperty("supportTier", out var tier)
+                && tier.GetString() == "amd-windows-7.2.1"
+                && ready.RootElement.TryGetProperty("rocmVersion", out var version)
+                && version.GetString()?.StartsWith("7.2.1", StringComparison.Ordinal) == true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
+        {
+            return false;
+        }
+    }
 
     private async Task DetectAmdGpuAsync()
     {
-        _amdGpuStatus.Text = "Checking installed GPU against AMD's Windows ROCm 7.2.1 list…";
+        _amdGpuStatus.Text = "Checking for an eligible discrete Radeon GPU…";
         try
         {
             var info = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
@@ -208,39 +264,86 @@ internal sealed partial class HubForm
                         PnpId: separator < 0 ? string.Empty : line[(separator + 1)..]);
                 }).ToArray();
             if (process.ExitCode != 0) throw new InvalidOperationException((await error).Trim());
-            var supported = new[]
-            {
-                "Radeon RX 9070 XT", "Radeon RX 9070", "Radeon AI PRO R9700",
-                "Radeon RX 9060 XT", "Radeon RX 7900 XTX", "Radeon PRO W7900",
-                "Radeon RX 7700",
-            };
-            var match = controllers.FirstOrDefault(controller => supported.Any(model =>
-                System.Text.RegularExpressions.Regex.IsMatch(controller.Name.Trim(),
-                    System.Text.RegularExpressions.Regex.Escape(model) + @"(?:\s*\([^)]*\))?\s*$",
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase)));
+            // Prefer the same discrete adapter as the installer when a PC has
+            // more than one: first an old 7.2.1-listed card, then another mapped card.
+            var match = controllers.FirstOrDefault(controller => IsLegacyAmdAdapter(controller.Name, controller.PnpId));
+            if (match.Name is null)
+                match = controllers.FirstOrDefault(controller => LatestRocmTarget(controller.Name, controller.PnpId) is not null);
+            _amdGpuLatestTarget = match.Name is not null ? LatestRocmTarget(match.Name, match.PnpId) : null;
+            _amdGpuLegacyEligible = match.Name is not null && IsLegacyAmdAdapter(match.Name, match.PnpId);
             _amdGpuDetected = controllers.Any(controller => controller.PnpId.Contains("VEN_1002", StringComparison.OrdinalIgnoreCase)
                 || controller.Name.Contains("AMD", StringComparison.OrdinalIgnoreCase)
                 || controller.Name.Contains("Radeon", StringComparison.OrdinalIgnoreCase));
-            _amdGpuSupported = match.Name is not null && Environment.OSVersion.Version.Build >= 22000;
+            var nvidiaDetected = controllers.Any(controller => controller.PnpId.Contains("VEN_10DE", StringComparison.OrdinalIgnoreCase)
+                || controller.Name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
+            _amdGpuSupported = _amdGpuLatestTarget is not null && Environment.OSVersion.Version.Build >= 22000;
             _amdGpuStatus.Text = match.Name is not null
-                ? _amdGpuSupported ? $"Supported AMD GPU detected: {match.Name.Trim()}" : "AMD ROCm 7.2.1 requires Windows 11."
-                : _amdGpuDetected
-                    ? "This AMD GPU is not listed for bundled ROCm 7.2.1; CPU runtime remains available."
-                    : controllers.Any(controller => controller.PnpId.Contains("VEN_10DE", StringComparison.OrdinalIgnoreCase)
-                        || controller.Name.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase))
-                        ? "NVIDIA GPU detected. Use Install runtime for CUDA; AMD ROCm is unavailable."
-                        : "No AMD GPU detected. AMD ROCm is unavailable on this PC.";
+                ? _amdGpuSupported
+                    ? $"ROCm 10.0 target: {match.Name.Trim()} ({_amdGpuLatestTarget})"
+                    : "AMD ROCm on Windows requires Windows 11."
+                : nvidiaDetected
+                    ? "NVIDIA GPU detected. Use Install runtime for CUDA; an AMD integrated GPU does not support this ROCm setup."
+                    : _amdGpuDetected
+                        ? "No eligible AMD discrete GPU found. Integrated graphics cannot use this ROCm setup."
+                        : "No supported AMD GPU detected. AMD ROCm is unavailable on this PC.";
         }
         catch (Exception error)
         {
-            _amdGpuStatus.Text = "GPU detection unavailable. Check AMD's list, then confirm your model below.";
+            _amdGpuStatus.Text = "GPU detection unavailable. AMD ROCm is disabled until the supported GPU can be detected.";
             AppendLog("GPU detection unavailable: " + error.Message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault());
             _amdGpuSupported = false;
+            _amdGpuLegacyEligible = false;
+            _amdGpuLatestTarget = null;
             _amdGpuDetected = false;
         }
         if (IsDisposed || Disposing) return;
-        _amdManualConfirm.Visible = _amdGpuDetected && !_amdGpuSupported && Environment.OSVersion.Version.Build >= 22000;
         UpdateSetupStepStyles();
         SetSetupButtonsEnabled(true);
+    }
+
+    private static string NormalizeAmdName(string name)
+    {
+        var normalized = System.Text.RegularExpressions.Regex.Replace(name, @"\((?:TM|R)\)", " ",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ").Trim();
+        if (normalized.StartsWith("AMD ", StringComparison.OrdinalIgnoreCase)) normalized = normalized[4..];
+        return normalized.StartsWith("RX ", StringComparison.OrdinalIgnoreCase) ? "Radeon " + normalized : normalized;
+    }
+
+    private static string? LatestRocmTarget(string name, string pnpId)
+    {
+        if (!pnpId.Contains("VEN_1002", StringComparison.OrdinalIgnoreCase)) return null;
+        var normalized = NormalizeAmdName(name);
+        // Match an exact discrete model with a published TheRock target. Do not
+        // treat the whole RX 6000, 7000, or 9000 series as interchangeable.
+        return normalized.ToUpperInvariant() switch
+        {
+            "RADEON RX 6950 XT" or "RADEON RX 6900 XT" or "RADEON RX 6800 XT" or "RADEON RX 6800" => "gfx1030",
+            "RADEON RX 6750 XT" or "RADEON RX 6700 XT" => "gfx1031",
+            "RADEON RX 6600 XT" or "RADEON RX 6600" => "gfx1032",
+            "RADEON RX 7900 XTX" or "RADEON RX 7900 XT" or "RADEON RX 7900 GRE"
+                or "RADEON PRO W7900" or "RADEON PRO W7900 DUAL SLOT" => "gfx1100",
+            "RADEON RX 7800 XT" or "RADEON RX 7700 XT" or "RADEON RX 7700" => "gfx1101",
+            "RADEON RX 7600 XT" or "RADEON RX 7600" => "gfx1102",
+            "RADEON RX 9070 XT" or "RADEON RX 9070" or "RADEON RX 9070 GRE"
+                or "RADEON AI PRO R9700" => "gfx1201",
+            "RADEON RX 9060 XT" or "RADEON RX 9060" => "gfx1200",
+            _ => null,
+        };
+    }
+
+    private static bool IsLegacyAmdAdapter(string name, string pnpId)
+    {
+        // An integrated Radeon may share the system with an NVIDIA card. Match
+        // the discrete model itself, never merely the AMD vendor name.
+        if (!pnpId.Contains("VEN_1002", StringComparison.OrdinalIgnoreCase)) return false;
+        var normalized = NormalizeAmdName(name);
+        var supported = new[]
+        {
+            "Radeon RX 9070 XT", "Radeon RX 9070", "Radeon AI PRO R9700",
+            "Radeon RX 9060 XT", "Radeon RX 7900 XTX", "Radeon PRO W7900",
+            "Radeon PRO W7900 Dual Slot", "Radeon RX 7700",
+        };
+        return supported.Contains(normalized, StringComparer.OrdinalIgnoreCase);
     }
 }

@@ -34,27 +34,31 @@ internal sealed partial class HubForm
     private static DarkButton ActionButton(string text, EventHandler action) { var button = SecondaryButton(text); button.Enabled = true; button.Margin = new Padding(6, 4, 6, 4); button.Click += action; return button; }
     private static DarkButton SetupButton(string text) { var button = SecondaryButton(text); button.Enabled = true; button.AutoSize = false; button.Height = 42; button.Dock = DockStyle.Bottom; button.Margin = new Padding(3, 8, 3, 3); return button; }
 
-    private static Control SetupStepCard(string number, string title, string description, Label status, DarkButton button, DarkButton? secondaryButton = null)
+    private static Control SetupStepCard(string number, string title, string description, Label status, params DarkButton[] buttons)
     {
-        var card = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 5, ColumnCount = 1, BackColor = Raised, Padding = new Padding(13), Margin = new Padding(5) };
+        if (buttons.Length == 0) throw new ArgumentException("A setup step needs an action", nameof(buttons));
+        var card = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, RowCount = 5, ColumnCount = 1, BackColor = Raised, Padding = new Padding(13), Margin = new Padding(5) };
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        card.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+        card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.RowStyles.Add(new RowStyle(SizeType.Absolute, 54 * buttons.Length));
         card.Controls.Add(new Label { Text = $"STEP {number}", AutoSize = true, ForeColor = Warning, Font = new Font(UiFontName, 8.5F, FontStyle.Bold) }, 0, 0);
         card.Controls.Add(new Label { Text = title, AutoSize = true, ForeColor = Color.White, Font = new Font(UiFontName, 11F, FontStyle.Bold), Margin = new Padding(3, 3, 3, 4) }, 0, 1);
         card.Controls.Add(status, 0, 2);
-        card.Controls.Add(new Label { Text = description, AutoSize = false, Dock = DockStyle.Fill, ForeColor = Muted, Margin = new Padding(3, 0, 3, 5) }, 0, 3);
-        if (secondaryButton is null)
-            card.Controls.Add(button, 0, 4);
+        card.Controls.Add(new Label { Text = description, AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = Muted, Margin = new Padding(3, 0, 3, 5), Tag = "responsive-info" }, 0, 3);
+        if (buttons.Length == 1)
+            card.Controls.Add(buttons[0], 0, 4);
         else
         {
-            var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            actions.Controls.Add(button, 0, 0);
-            actions.Controls.Add(secondaryButton, 1, 0);
+            var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = buttons.Length, Margin = Padding.Empty };
+            actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            for (var index = 0; index < buttons.Length; index++)
+            {
+                // Divide the outer action row evenly after its DPI height is set.
+                actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100F / buttons.Length));
+                actions.Controls.Add(buttons[index], 0, index);
+            }
             card.Controls.Add(actions, 0, 4);
         }
         return card;

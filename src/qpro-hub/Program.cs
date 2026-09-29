@@ -44,16 +44,18 @@ internal static class Program
             if (renderArgument >= 0)
             {
                 if (renderArgument + 1 >= args.Length) throw new ArgumentException("--render-preview requires an output PNG path.");
-                using var form = new HubForm(root);
+                using var form = new HubForm(root, rememberLaunch: false);
                 if (args.Any(value => value.Equals("--preview-small", StringComparison.OrdinalIgnoreCase)))
                     form.Size = form.MinimumSize;
                 var viewportArgument = Array.FindIndex(args, value => value.Equals("--preview-viewport", StringComparison.OrdinalIgnoreCase));
+                Size? requestedViewport = null;
                 if (viewportArgument >= 0)
                 {
                     if (viewportArgument + 2 >= args.Length || !int.TryParse(args[viewportArgument + 1], out var width) || !int.TryParse(args[viewportArgument + 2], out var height) || width < 640 || height < 480)
                         throw new ArgumentException("--preview-viewport requires width and height of at least 640 by 480.");
                     form.MinimumSize = Size.Empty;
-                    form.Size = new Size(width, height);
+                    requestedViewport = new Size(width, height);
+                    form.Size = requestedViewport.Value;
                 }
                 form.Show();
                 Application.DoEvents();
@@ -71,8 +73,20 @@ internal static class Program
                     if (scroll is not null) scroll.AutoScrollPosition = new Point(0, scroll.VerticalScroll.Maximum);
                     Application.DoEvents();
                 }
-                using var preview = new Bitmap(form.Width, form.Height);
-                form.DrawToBitmap(preview, new Rectangle(Point.Empty, form.Size));
+                Control imageSource = form;
+                if (requestedViewport is { } viewport && (viewport.Width > form.Width || viewport.Height > form.Height))
+                {
+                    // Windows caps top-level windows to this monitor's work area. Size the
+                    // layout surface directly to preview a larger display without moving it.
+                    var layoutSurface = form.Controls[0];
+                    layoutSurface.Dock = DockStyle.None;
+                    layoutSurface.Size = viewport;
+                    layoutSurface.PerformLayout();
+                    Application.DoEvents();
+                    imageSource = layoutSurface;
+                }
+                using var preview = new Bitmap(imageSource.Width, imageSource.Height);
+                imageSource.DrawToBitmap(preview, new Rectangle(Point.Empty, imageSource.Size));
                 preview.Save(Path.GetFullPath(args[renderArgument + 1]), ImageFormat.Png);
                 form.Close();
                 return;
@@ -81,9 +95,21 @@ internal static class Program
         }
         catch (Exception error)
         {
-            var log = Path.Combine(root, "qpro-hub-crash.txt");
-            File.WriteAllText(log, error.ToString());
-            MessageBox.Show(error.Message + "\n\nDetails: " + log, "QproFaceTracking Hub could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            string? log = null;
+            try
+            {
+                var localData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QproFaceTracking");
+                Directory.CreateDirectory(localData);
+                log = Path.Combine(localData, "qpro-hub-crash.txt");
+                File.WriteAllText(log, error.ToString());
+            }
+            catch (Exception writeError) when (writeError is IOException or UnauthorizedAccessException)
+            {
+                // Show the original startup failure even on a read-only install.
+                log = null;
+            }
+            MessageBox.Show(error.Message + "\n\n" + (log is null ? error.ToString() : "Details: " + log),
+                "QproFaceTracking Hub could not start", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -111,11 +137,11 @@ internal static class Program
             : [];
         var requiredFiles = new[]
         {
-            "build-and-run.ps1", "native-eye-local-branch-test.ps1", "install-vrcft-eye-bridge.ps1", "uninstall-vrcft-eye-bridge.ps1", "runtime-python.ps1",
+            "build-and-run.ps1", "native-eye-local-branch-test.ps1", "prepare-eye-model.ps1", "prepare_eye_model.py", "research\\patch_seacliff_independent_axes.py", "native_raw_eye_probe.py", "install-vrcft-eye-bridge.ps1", "uninstall-vrcft-eye-bridge.ps1", "runtime-python.ps1",
             "platform-tools\\adb.exe", "platform-tools\\AdbWinApi.dll", "platform-tools\\AdbWinUsbApi.dll",
-            "python-runtime\\python-3.12.10-amd64.exe", "python-runtime\\LICENSE.txt", "python-runtime\\README.txt",
+            "python-runtime\\python.3.12.10.nupkg", "python-runtime\\LICENSE.txt", "python-runtime\\README.txt",
             "SFX\\succeed.wav", "SFX\\trainingComplete.wav", "SFX\\warning.wav",
-            "calibration_inspect.py", "pupil_dilation.py", "pupil_gaze_calibration.py",
+            "calibration_inspect.py", "pupil_dilation.py", "pupil_gaze_calibration.py", "qpro_gpu.py",
             "tongue_visibility_calibration.py", "model_preview.py", "hybrid_preview.py", "train_model.py",
             "libquestpro-camera-streamer-v8.so", "questpro-camera-relay-v8", "questpro-camera-injector",
             "vd-label-bridge\\bin\\Release\\net10.0\\Qpro.VirtualDesktopLabelBridge.exe",
@@ -140,14 +166,14 @@ internal sealed record FileChoice(string Label, string Primary, string? Secondar
     public override string ToString() => Label;
 }
 
-internal sealed record DatasetInfo(string SessionPath, string CapturePath, string DisplayName, int SampleCount, bool Completed);
+internal sealed record DatasetInfo(string SessionPath, string CapturePath, string DisplayName, int SampleCount, bool Completed, bool LegacyDiagonalOnly = false);
 
 internal sealed record DatasetChoice(DatasetInfo Dataset)
 {
-    public override string ToString() => $"{Dataset.DisplayName} · {Dataset.SampleCount} stills";
+    public override string ToString() => $"{(Dataset.LegacyDiagonalOnly ? "Legacy diagonal-only · " : string.Empty)}{Dataset.DisplayName} · {Dataset.SampleCount} stills";
 }
 
 internal sealed record RecordedDatasetChoice(DatasetInfo Dataset, bool Trained)
 {
-    public override string ToString() => $"{Dataset.DisplayName} · {(Trained ? "trained" : Dataset.Completed ? "ready" : "incomplete")}";
+    public override string ToString() => $"{(Dataset.LegacyDiagonalOnly ? "Legacy diagonal-only · " : string.Empty)}{Dataset.DisplayName} · {(Trained ? "trained" : Dataset.Completed ? "ready" : "incomplete")}";
 }

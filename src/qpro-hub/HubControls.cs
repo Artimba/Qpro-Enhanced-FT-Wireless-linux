@@ -101,6 +101,8 @@ internal sealed class DarkButton : Button
     protected override void OnMouseDown(MouseEventArgs e) { _pressed = true; Invalidate(); base.OnMouseDown(e); }
     protected override void OnMouseUp(MouseEventArgs e) { _pressed = false; Invalidate(); base.OnMouseUp(e); }
     protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -112,6 +114,9 @@ internal sealed class DarkButton : Button
         e.Graphics.DrawRectangle(border, inset, inset, Width - (inset * 2 + 1), Height - (inset * 2 + 1));
         var textColor = !Enabled ? HubForm.DisabledText : _pressed ? HubForm.Background : Color.White;
         TextRenderer.DrawText(e.Graphics, Text, Font, ClientRectangle, textColor, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+        // User-painted buttons must draw their own keyboard focus cue.
+        if (Focused && ShowFocusCues && Width > 12 && Height > 12)
+            ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -5, -5), textColor, BackColor);
     }
 }
 
