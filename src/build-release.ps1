@@ -17,6 +17,8 @@ $distRoot = [System.IO.Path]::GetFullPath((Join-Path $root "dist"))
 $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $distRoot $releaseName))
 $runtimeRoot = Join-Path $releaseRoot "QproRuntime"
 $artifactRoot = [System.IO.Path]::GetFullPath((Join-Path $root "artifacts\release-$safeVersion"))
+$pythonArchiveUrl = 'https://api.nuget.org/v3-flatcontainer/python/3.12.10/python.3.12.10.nupkg'
+$pythonArchiveSha256 = '0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8'
 $dotnet = if ($env:DOTNET_ROOT -and (Test-Path -LiteralPath (Join-Path $env:DOTNET_ROOT "dotnet.exe") -PathType Leaf)) {
     Join-Path $env:DOTNET_ROOT "dotnet.exe"
 } else { "dotnet" }
@@ -61,13 +63,52 @@ $vrcftBinaryDestination = Join-Path $runtimeRoot "vrcft-gaze-bridge\bin\Release\
 New-Item -ItemType Directory -Force -Path $vrcftBinaryDestination | Out-Null
 Copy-Item -LiteralPath (Join-Path $root "vrcft-gaze-bridge\bin\Release\net10.0\Qpro.GazeBridge.dll") -Destination $vrcftBinaryDestination
 
+function Get-QproPythonArchive {
+    $cacheRoot = Join-Path $root 'artifacts\python-package'
+    $archivePath = Join-Path $cacheRoot 'python.3.12.10.nupkg'
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        $cachedHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($cachedHash -eq $pythonArchiveSha256) { return $archivePath }
+        Write-Warning 'The cached Python NuGet archive failed SHA-256 verification; downloading a clean copy.'
+    }
+
+    New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+    $temporaryPath = Join-Path $cacheRoot ('python.3.12.10-' + [guid]::NewGuid().ToString('N') + '.download')
+    try {
+        Write-Host 'Downloading the pinned Python 3.12.10 NuGet archive from nuget.org...'
+        try {
+            Invoke-WebRequest -Uri $pythonArchiveUrl -OutFile $temporaryPath -UseBasicParsing -TimeoutSec 180 -ErrorAction Stop
+        }
+        catch {
+            throw "The required Python NuGet archive is missing and its official download failed: $($_.Exception.Message). Provide python-runtime\python.3.12.10.nupkg through -AssetRoot or retry with internet access."
+        }
+        if (-not (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
+            throw 'The official Python NuGet download did not create an archive. Provide python-runtime\python.3.12.10.nupkg through -AssetRoot or retry.'
+        }
+        $downloadHash = (Get-FileHash -LiteralPath $temporaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($downloadHash -ne $pythonArchiveSha256) {
+            throw "The official Python NuGet download failed SHA-256 verification (expected $pythonArchiveSha256, received $downloadHash). No archive was cached."
+        }
+        if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+            $cachedHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($cachedHash -eq $pythonArchiveSha256) { return $archivePath }
+            Remove-Item -LiteralPath $archivePath -Force
+        }
+        Move-Item -LiteralPath $temporaryPath -Destination $archivePath
+        return $archivePath
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporaryPath) { Remove-Item -LiteralPath $temporaryPath -Force }
+    }
+}
+
 function Copy-ReleaseFile([string]$RelativePath) {
     $source = Join-Path $root $RelativePath
     if (-not (Test-Path -LiteralPath $source) -and $assetRootResolved) {
         $source = Join-Path $assetRootResolved $RelativePath
     }
     if (-not (Test-Path -LiteralPath $source) -and $RelativePath -eq 'python-runtime\python.3.12.10.nupkg') {
-        $source = Join-Path $root 'artifacts\python-package\python.3.12.10.nupkg'
+        $source = Get-QproPythonArchive
     }
     if (-not (Test-Path -LiteralPath $source)) { throw "Required release file is missing: $RelativePath" }
     $destination = Join-Path $runtimeRoot $RelativePath
@@ -163,7 +204,7 @@ foreach ($file in @("python.3.12.10.nupkg", "README.txt")) {
 }
 $pythonArchivePath = Join-Path $runtimeRoot 'python-runtime\python.3.12.10.nupkg'
 $pythonArchiveHash = (Get-FileHash -LiteralPath $pythonArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($pythonArchiveHash -ne '0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d93de3b8') {
+if ($pythonArchiveHash -ne $pythonArchiveSha256) {
     throw 'The bundled Python NuGet archive failed its release integrity check.'
 }
 Add-Type -AssemblyName System.IO.Compression.FileSystem

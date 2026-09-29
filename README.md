@@ -14,7 +14,7 @@ The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/332
 
 ## Repository layout
 
-The runnable release keeps the Hub and guide in its main folder. This GitHub repository keeps the development source, tests, and build scripts together in [`src/`](src/). Building a package requires the .NET 10 SDK, an installed VRCFaceTracking, and the binary assets from an extracted Qpro release. In PowerShell, replace both example paths with paths on your PC:
+The runnable release keeps the Hub and guide in its main folder. This GitHub repository keeps the development source, tests, and build scripts together in [`src/`](src/). Building a package requires the .NET 10 SDK, an installed VRCFaceTracking, and the binary assets from an extracted Qpro release. Older releases contain a Python installer instead of the NuGet archive required by this build, so the script downloads the pinned official Python 3.12.10 archive when needed and verifies its SHA-256 hash. For an offline build, supply `python-runtime/python.3.12.10.nupkg` in the source folder or asset root. In PowerShell, replace both example paths with paths on your PC:
 
 ```powershell
 cd src
