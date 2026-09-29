@@ -84,8 +84,6 @@ public sealed class TrackingModule : ExtTrackingModule
     private float _rightGazeX;
     private float _rightGazeY;
     private byte _gazeFlags;
-    private readonly BlinkGazeHold _leftBlinkGaze = new();
-    private readonly BlinkGazeHold _rightBlinkGaze = new();
     private readonly float[] _tongueValues = new float[12];
     private bool _tongueEnabled;
     private bool _tongueDirty;
@@ -106,8 +104,6 @@ public sealed class TrackingModule : ExtTrackingModule
     {
         _needsEye = eyeAvailable;
         _needsExpression = expressionAvailable;
-        _leftBlinkGaze.Reset();
-        _rightBlinkGaze.Reset();
         _useSteamLink = ReadSteamLinkSelection();
         ModuleInformation = new ModuleMetadata
         {
@@ -208,8 +204,6 @@ public sealed class TrackingModule : ExtTrackingModule
     public override void Teardown()
     {
         _smirkTracker.Reset();
-        _leftBlinkGaze.Reset();
-        _rightBlinkGaze.Reset();
         _gazeSocket?.Dispose();
         _gazeSocket = null;
         _tongueSocket?.Dispose();
@@ -293,7 +287,7 @@ public sealed class TrackingModule : ExtTrackingModule
         ReadOnlySpan<float> upperValues = upperFaceAvailable ? expressions : neutral;
         ReadOnlySpan<float> lowerValues = lowerFaceAvailable ? expressions : neutral;
         if (_needsEye)
-            UpdateSteamEyes(upperValues, upperFaceAvailable, now);
+            UpdateSteamEyes(upperValues, now);
         if (_needsEye || _needsExpression)
             UpdateBrowExpressions(upperValues);
         if (_needsExpression)
@@ -336,8 +330,7 @@ public sealed class TrackingModule : ExtTrackingModule
         }
     }
 
-    private void UpdateSteamEyes(ReadOnlySpan<float> values,
-        bool upperFaceAvailable, long now)
+    private void UpdateSteamEyes(ReadOnlySpan<float> values, long now)
     {
         bool customFresh = _lastGazeTick != 0 && now - _lastGazeTick <= GazeTimeoutMs;
         float leftX = 0, leftY = 0, rightX = 0, rightY = 0;
@@ -346,13 +339,26 @@ public sealed class TrackingModule : ExtTrackingModule
             _steamSource.TryGetGaze(now, out leftX, out leftY,
                 out rightX, out rightY);
 
-        GazePoint? left = customFresh && (_gazeFlags & 1) != 0
-            ? new GazePoint(_leftGazeX, _leftGazeY)
-            : steamGazeFresh ? new GazePoint(leftX, leftY) : null;
-        GazePoint? right = customFresh && (_gazeFlags & 2) != 0
-            ? new GazePoint(_rightGazeX, _rightGazeY)
-            : steamGazeFresh ? new GazePoint(rightX, rightY) : null;
-        ApplyBlinkGaze(values, upperFaceAvailable, left, right, now);
+        if (customFresh && (_gazeFlags & 1) != 0)
+        {
+            UnifiedTracking.Data.Eye.Left.Gaze.x = _leftGazeX;
+            UnifiedTracking.Data.Eye.Left.Gaze.y = _leftGazeY;
+        }
+        else if (steamGazeFresh)
+        {
+            UnifiedTracking.Data.Eye.Left.Gaze.x = leftX;
+            UnifiedTracking.Data.Eye.Left.Gaze.y = leftY;
+        }
+        if (customFresh && (_gazeFlags & 2) != 0)
+        {
+            UnifiedTracking.Data.Eye.Right.Gaze.x = _rightGazeX;
+            UnifiedTracking.Data.Eye.Right.Gaze.y = _rightGazeY;
+        }
+        else if (steamGazeFresh)
+        {
+            UnifiedTracking.Data.Eye.Right.Gaze.x = rightX;
+            UnifiedTracking.Data.Eye.Right.Gaze.y = rightY;
+        }
 
         UnifiedTracking.Data.Eye.Left.Openness = 1.0f - Math.Clamp(
             values[12] + values[12] * values[28], 0.0f, 1.0f);
@@ -528,13 +534,28 @@ public sealed class TrackingModule : ExtTrackingModule
         bool customFresh = _lastGazeTick != 0 &&
             now - _lastGazeTick <= GazeTimeoutMs;
 
-        GazePoint? left = customFresh && (_gazeFlags & 1) != 0
-            ? new GazePoint(_leftGazeX, _leftGazeY)
-            : leftValid ? GazeFromQuaternion(_second, 296) : null;
-        GazePoint? right = customFresh && (_gazeFlags & 2) != 0
-            ? new GazePoint(_rightGazeX, _rightGazeY)
-            : rightValid ? GazeFromQuaternion(_second, 324) : null;
-        ApplyBlinkGaze(values, _second[1] != 0, left, right, now);
+        if (customFresh && (_gazeFlags & 1) != 0)
+        {
+            UnifiedTracking.Data.Eye.Left.Gaze.x = _leftGazeX;
+            UnifiedTracking.Data.Eye.Left.Gaze.y = _leftGazeY;
+        }
+        else if (leftValid)
+        {
+            (float x, float y) = QuaternionToCartesian(_second, 296);
+            UnifiedTracking.Data.Eye.Left.Gaze.x = x;
+            UnifiedTracking.Data.Eye.Left.Gaze.y = y;
+        }
+        if (customFresh && (_gazeFlags & 2) != 0)
+        {
+            UnifiedTracking.Data.Eye.Right.Gaze.x = _rightGazeX;
+            UnifiedTracking.Data.Eye.Right.Gaze.y = _rightGazeY;
+        }
+        else if (rightValid)
+        {
+            (float x, float y) = QuaternionToCartesian(_second, 324);
+            UnifiedTracking.Data.Eye.Right.Gaze.x = x;
+            UnifiedTracking.Data.Eye.Right.Gaze.y = y;
+        }
 
         // Blink drives closure. A smile can raise the cheeks and tighten the
         // lids without actually closing either eye.
@@ -556,29 +577,6 @@ public sealed class TrackingModule : ExtTrackingModule
 
         if (_second[1] != 0)
             UpdateEyeExpressions(values);
-    }
-
-    private void ApplyBlinkGaze(ReadOnlySpan<float> values, bool blinkAvailable,
-        GazePoint? left, GazePoint? right, long now)
-    {
-        GazePoint? heldLeft = _leftBlinkGaze.Update(values[12], blinkAvailable, left, now);
-        GazePoint? heldRight = _rightBlinkGaze.Update(values[13], blinkAvailable, right, now);
-        if (heldLeft is { } leftPoint)
-        {
-            UnifiedTracking.Data.Eye.Left.Gaze.x = leftPoint.X;
-            UnifiedTracking.Data.Eye.Left.Gaze.y = leftPoint.Y;
-        }
-        if (heldRight is { } rightPoint)
-        {
-            UnifiedTracking.Data.Eye.Right.Gaze.x = rightPoint.X;
-            UnifiedTracking.Data.Eye.Right.Gaze.y = rightPoint.Y;
-        }
-    }
-
-    private static GazePoint GazeFromQuaternion(byte[] bytes, int offset)
-    {
-        (float x, float y) = QuaternionToCartesian(bytes, offset);
-        return new GazePoint(x, y);
     }
 
     private static void UpdateEyeExpressions(ReadOnlySpan<float> values)

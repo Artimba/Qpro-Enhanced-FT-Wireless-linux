@@ -13,6 +13,5 @@
     <Compile Include="../../vrcft-gaze-bridge/EyebrowMapping.cs" Link="EyebrowMapping.cs" />
     <Compile Include="../../vrcft-gaze-bridge/CheekSuckMapping.cs" Link="CheekSuckMapping.cs" />
     <Compile Include="../../vrcft-gaze-bridge/SmirkMapping.cs" Link="SmirkMapping.cs" />
-    <Compile Include="../../vrcft-gaze-bridge/BlinkGazeHold.cs" Link="BlinkGazeHold.cs" />
   </ItemGroup>
 </Project>

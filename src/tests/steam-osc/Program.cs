@@ -2,8 +2,6 @@ using System.Buffers.Binary;
 using System.Text;
 using Qpro.GazeBridge;
 
-BlinkGazeContractTests.Run();
-
 if (args.Length == 2 && args[0] == "--live-probe" && int.TryParse(args[1], out int seconds))
 {
     using var live = new SteamOscSource();
