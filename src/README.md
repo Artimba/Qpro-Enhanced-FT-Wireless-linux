@@ -21,7 +21,7 @@ Before changing your headset, compare its **exact model and firmware build** wit
 
 **Experimental relative pupil dilation** is included in V2.0.2 and has been live-tested in VRChat. It is an avatar animation estimate, not a calibrated pupil measurement.
 
-An experimental **Steam Link face-tracking source** is being developed for a separate test build. The published V2.0.2 ZIP still uses Virtual Desktop. The test build's [text setup instructions](RELEASE_INSTRUCTIONS.md#steam-link-source-in-the-experimental-test-build) explain Steam Link OSC settings and its separate Qpro module install button. Steam Link face, blink, and mouth tracking worked after a headset restart, and Qpro's camera tongue override moved in VRChat; native Steam TongueOut still needs a live retest.
+An experimental **Steam Link face-tracking source** is being developed for a separate test build. The published V2.0.2 ZIP still uses Virtual Desktop. The test build's [text setup instructions](RELEASE_INSTRUCTIONS.md#steam-link-source-in-the-experimental-test-build) explain Steam Link OSC settings and its separate Qpro module install button. Steam Link face, blink, and mouth tracking worked after a headset restart, Qpro's camera tongue override moved in VRChat, and native Steam TongueOut worked with VRCFaceTracking running on Steam Link.
 
 ## Requirements
 
