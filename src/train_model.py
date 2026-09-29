@@ -193,7 +193,7 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
-    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--device", default="auto")
     parser.add_argument("--output", default="models/qpro-five-camera.pt")
     arguments = parser.parse_args()
     if arguments.epochs < 1 or arguments.batch_size < 1:
@@ -210,9 +210,10 @@ def main() -> int:
     train_indices, validation_indices = blocked_split(step_ids)
     train_data = CachedFrames(cache, train_indices, augment=True)
     validation_data = CachedFrames(cache, validation_indices, augment=False)
-    device = torch.device(arguments.device)
+    from qpro_gpu import validated_torch_device_name
+    device = torch.device(validated_torch_device_name(torch, arguments.device))
     if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but PyTorch cannot access an NVIDIA GPU")
+        raise RuntimeError("GPU acceleration was requested but PyTorch cannot access the selected GPU")
     train_loader = DataLoader(
         train_data, batch_size=arguments.batch_size, shuffle=True,
         num_workers=0, pin_memory=device.type == "cuda",

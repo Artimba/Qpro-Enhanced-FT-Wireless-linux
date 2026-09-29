@@ -13,6 +13,7 @@ import numpy as np
 import torch
 
 from train_model import QuestProTrackingModel
+from qpro_gpu import validated_torch_device_name
 
 
 @dataclass
@@ -25,8 +26,7 @@ class Prediction:
 class LiveModelPreview:
     def __init__(self, checkpoint_path: str | Path, device_name: str = "auto") -> None:
         checkpoint_path = Path(checkpoint_path).resolve()
-        if device_name == "auto":
-            device_name = "cuda:0" if torch.cuda.is_available() else "cpu"
+        device_name = validated_torch_device_name(torch, device_name)
         self.device = torch.device(device_name)
         checkpoint = torch.load(
             checkpoint_path, map_location=self.device, weights_only=True
