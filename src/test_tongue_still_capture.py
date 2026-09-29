@@ -86,18 +86,53 @@ class TongueStillCaptureTests(unittest.TestCase):
         for unsupported in ("inside left cheek", "inside right cheek", "roll", "squish", "flat / thin", "twist"):
             self.assertNotIn(unsupported, names)
 
-    def test_arc_set_covers_full_vertical_at_five_horizontal_positions(self):
+    def test_arc_set_covers_extreme_and_mid_diagonal_targets(self):
         coordinates = {
             (float(value.targets["horizontal"]), float(value.targets["vertical"]))
             for value in TONGUE_ARC_PROMPTS
+            if "horizontal" in value.targets and "vertical" in value.targets
         }
         expected = {
             (horizontal, vertical)
             for horizontal in (-1.0, -0.5, 0.0, 0.5, 1.0)
             for vertical in (-1.0, 1.0)
         }
+        expected.update({
+            (horizontal, vertical)
+            for horizontal in (-0.5, 0.5)
+            for vertical in (-0.5, 0.5)
+        })
         self.assertEqual(coordinates, expected)
-        self.assertEqual(len(TONGUE_ARC_PROMPTS), 10)
+        self.assertTrue(all(value.recommended_captures == 6 for value in TONGUE_ARC_PROMPTS))
+
+    def test_arc_facial_hair_cards_pair_hidden_and_visible_contexts(self):
+        hair_cards = [
+            card for card in TONGUE_ARC_PROMPTS if card.context.startswith("facial hair / ")
+        ]
+        self.assertEqual(len(hair_cards), 8)
+        contexts = {card.context for card in hair_cards}
+        self.assertEqual(contexts, {
+            "facial hair / neutral", "facial hair / smile",
+            "facial hair / open jaw", "facial hair / fit variation",
+        })
+        for context in contexts:
+            pair = [card for card in hair_cards if card.context == context]
+            self.assertEqual(len(pair), 2)
+            self.assertEqual(
+                sorted(card.targets.get("visibility", 0.0) for card in pair),
+                [0.0, 1.0],
+            )
+            visible = next(card for card in pair if card.targets.get("visibility"))
+            self.assertGreater(visible.targets["extension"], 0)
+            self.assertNotIn("horizontal", visible.targets)
+            self.assertNotIn("vertical", visible.targets)
+            self.assertTrue(all(card.minimum_captures >= 4 for card in pair))
+            self.assertNotIn("skip", visible.instruction.lower())
+        fit_visible = next(
+            card for card in hair_cards
+            if card.context == "facial hair / fit variation" and card.targets.get("visibility")
+        )
+        self.assertIn("retake", fit_visible.instruction.lower())
 
 
 if __name__ == "__main__":

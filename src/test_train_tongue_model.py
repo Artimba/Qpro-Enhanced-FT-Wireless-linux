@@ -9,11 +9,33 @@ from train_tongue_model import (
     balanced_step_weights,
     blocked_train_validation_split,
     classification_at_threshold,
+    heldout_pose_metrics,
+    shade_local_mouth_area,
     target_loss,
 )
 
 
 class TongueTrainingTests(unittest.TestCase):
+    def test_split_reports_no_trainable_card_without_numpy_concatenate_error(self):
+        steps = np.asarray([0, 0, 0, 1, 1, 1])
+        trainable = np.asarray([True, True, True, False, False, False])
+        training, validation = blocked_train_validation_split(
+            steps, trainable, dataset_type="manual-stereo-stills"
+        )
+        self.assertEqual(training.dtype, np.int64)
+        self.assertEqual(validation.dtype, np.int64)
+        self.assertEqual(len(training), 0)
+        self.assertEqual(len(validation), 0)
+
+    def test_local_mouth_shading_preserves_stereo_geometry_and_evidence(self):
+        images = torch.ones(2, 64, 64)
+        result = shade_local_mouth_area(images, 18, 17, 22, 24, 0.28)
+        self.assertEqual(tuple(result.shape), (2, 64, 64))
+        self.assertTrue(torch.equal(result[0], result[1]))
+        self.assertEqual(float(result[:, 0, 0].min()), 1.0)
+        self.assertLess(float(result[:, 28, 28].max()), 1.0)
+        self.assertGreaterEqual(float(result.min()), 0.72)
+
     def test_split_excludes_untrainable_frames(self):
         steps = np.repeat(np.arange(3), 100)
         trainable = np.ones(len(steps), dtype=bool)
@@ -97,6 +119,52 @@ class TongueTrainingTests(unittest.TestCase):
         self.assertEqual(metrics["recall"], 1.0)
         self.assertEqual(metrics["falsePositiveRate"], 0.5)
         self.assertEqual(metrics["falseNegativeRate"], 0.0)
+
+    def test_heldout_pose_metrics_expose_missed_diagonals_by_card(self):
+        names = ["visibility", "horizontal", "vertical"]
+        target = np.asarray([
+            [0.0, 0.0, 0.0], [0.0, 0.0, 0.0],
+            [1.0, -0.75, 0.75], [1.0, -0.75, 0.75],
+            [1.0, 0.75, -0.75], [1.0, 0.0, 0.0],
+        ])
+        prediction = np.asarray([
+            [0.1, 0.0, 0.0], [0.9, 0.0, 0.0],
+            [0.4, -0.75, 0.75], [0.8, -0.25, 0.25],
+            [0.3, 0.5, -0.25], [0.9, 0.1, -0.1],
+        ])
+        step_ids = np.asarray([0, 0, 1, 1, 2, 3])
+        native = np.zeros(len(target))
+        report = heldout_pose_metrics(
+            prediction, target, native, step_ids, names, 1.0, 0.5
+        )
+        cards = {card["promptId"]: card for card in report["perPrompt"]}
+        self.assertEqual(cards[0]["visibleSamples"], 0)
+        self.assertIsNone(cards[0]["visibilityFalseNegativeRate"])
+        self.assertEqual(cards[0]["visibilityFalsePositiveRate"], 0.5)
+        self.assertEqual(cards[1]["missedVisible"], 1)
+        self.assertEqual(cards[1]["visibilityFalseNegativeRate"], 0.5)
+        self.assertAlmostEqual(cards[1]["directionMae"], 0.25)
+        self.assertEqual(cards[2]["visibilityFalseNegativeRate"], 1.0)
+        corners = {corner["corner"]: corner for corner in report["diagonalCorners"]}
+        self.assertEqual(corners["upper-left"]["visibleSamples"], 2)
+        self.assertEqual(corners["upper-left"]["missedVisible"], 1)
+        self.assertAlmostEqual(corners["lower-right"]["directionMae"], 0.375)
+        self.assertIsNone(corners["upper-right"]["directionMae"])
+
+        # The audit uses the selected global gate; it does not refit each card.
+        native[2] = 1.0
+        blended = heldout_pose_metrics(
+            prediction, target, native, step_ids, names, 0.8, 0.5
+        )
+        self.assertEqual(blended["perPrompt"][1]["missedVisible"], 0)
+
+    def test_heldout_pose_metrics_reject_misaligned_prompt_ids(self):
+        with self.assertRaisesRegex(ValueError, "aligned"):
+            heldout_pose_metrics(
+                np.zeros((2, 3)), np.zeros((2, 3)), np.zeros(2),
+                np.asarray([0]), ["visibility", "horizontal", "vertical"],
+                1.0, 0.5,
+            )
 
 
 if __name__ == "__main__":

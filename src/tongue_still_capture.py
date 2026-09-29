@@ -118,6 +118,47 @@ TONGUE_STILL_PROMPTS = [
     prompt("Tongue lower-right", "Point diagonally down and toward your right.",
            visible(extension=0.75, horizontal=1.0, vertical=-1.0), guide="Down + Right"),
 
+    # Fixed intermediate positions reveal whether the model can resolve X and
+    # Y together. A sweep would give every captured frame the same label even
+    # though the tip moves, so each card asks for one held pose.
+    prompt("Tongue upper-left (half diagonal)", "Hold the visible tip halfway up and halfway toward your left.",
+           visible(extension=0.75, horizontal=-0.5, vertical=0.5), guide="Up 0.50 + Left 0.50"),
+    prompt("Tongue upper-right (half diagonal)", "Hold the visible tip halfway up and halfway toward your right.",
+           visible(extension=0.75, horizontal=0.5, vertical=0.5), guide="Up 0.50 + Right 0.50"),
+    prompt("Tongue lower-left (half diagonal)", "Hold the visible tip halfway down and halfway toward your left.",
+           visible(extension=0.75, horizontal=-0.5, vertical=-0.5), guide="Down 0.50 + Left 0.50"),
+    prompt("Tongue lower-right (half diagonal)", "Hold the visible tip halfway down and halfway toward your right.",
+           visible(extension=0.75, horizontal=0.5, vertical=-0.5), guide="Down 0.50 + Right 0.50"),
+    prompt("Tongue fully up, half left", "Hold the tip fully upward and halfway toward your left, visible in both views.",
+           visible(extension=0.75, horizontal=-0.5, vertical=1.0), guide="Up 1.00 + Left 0.50"),
+    prompt("Tongue fully up, half right", "Hold the tip fully upward and halfway toward your right, visible in both views.",
+           visible(extension=0.75, horizontal=0.5, vertical=1.0), guide="Up 1.00 + Right 0.50"),
+    prompt("Tongue fully down, half left", "Hold the tip fully downward and halfway toward your left, visible in both views.",
+           visible(extension=0.75, horizontal=-0.5, vertical=-1.0), guide="Down 1.00 + Left 0.50"),
+    prompt("Tongue fully down, half right", "Hold the tip fully downward and halfway toward your right, visible in both views.",
+           visible(extension=0.75, horizontal=0.5, vertical=-1.0), guide="Down 1.00 + Right 0.50"),
+    prompt("Tongue far left, half up", "Hold the tip far toward your left and halfway upward, visible in both views.",
+           visible(extension=0.75, horizontal=-1.0, vertical=0.5), guide="Left 1.00 + Up 0.50"),
+    prompt("Tongue far right, half up", "Hold the tip far toward your right and halfway upward, visible in both views.",
+           visible(extension=0.75, horizontal=1.0, vertical=0.5), guide="Right 1.00 + Up 0.50"),
+    prompt("Tongue far left, half down", "Hold the tip far toward your left and halfway downward, visible in both views.",
+           visible(extension=0.75, horizontal=-1.0, vertical=-0.5), guide="Left 1.00 + Down 0.50"),
+    prompt("Tongue far right, half down", "Hold the tip far toward your right and halfway downward, visible in both views.",
+           visible(extension=0.75, horizontal=1.0, vertical=-0.5), guide="Right 1.00 + Down 0.50"),
+
+    # The visible tip is hardest to distinguish when extension is small or
+    # lips, teeth, and fit change. Match these conditions to hidden cards above.
+    prompt("Tongue tip with smile and teeth", "Show only a clearly visible centered tip while smiling with teeth visible.",
+           visible(extension=0.25), context="smile + teeth", guide="TongueOut 0.25", captures=8),
+    prompt("Tongue tip with jaw half open", "Keep the jaw halfway open and show only a clearly visible centered tip.",
+           visible(extension=0.25), context="jaw half open", guide="TongueOut 0.25", captures=8),
+    prompt("Tongue tip with rounded lips", "Make a comfortable rounded mouth while showing a centered tip in both camera views.",
+           visible(extension=0.25), context="rounded lips", guide="TongueOut 0.25", captures=8),
+    prompt("Small headset-fit change, tongue hidden", "Make a small comfortable headset-fit adjustment between stills; keep the tongue hidden.",
+           context="fit variation"),
+    prompt("Small headset-fit change, tongue visible", "Repeat small comfortable fit adjustments with the tongue centered and clearly visible in both views.",
+           visible(extension=0.75), context="fit variation", guide="TongueOut 0.75"),
+
     # Keep the two tip-curvature poses that remain visible from the lower
     # cameras. Roll/squish/flat/twist were removed: the Quest Pro views do not
     # expose those shapes consistently enough for honest supervision.
@@ -191,21 +232,37 @@ TONGUE_REFINEMENT_PROMPTS = [
 ]
 
 
-# A deliberately small add-on for the mixed-axis blind spot discovered during
-# physical v7 testing. "Upper-left 50%" is not the same pose as fully up with
-# a half-left component, so both vertical extremes are sampled across five
-# horizontal positions. These are fixed Cartesian targets, not a moving sweep.
+# A focused follow-up for mixed-axis errors and lower-face occlusion. The first
+# ten cards retain the original extreme arc targets. Moderate corners provide
+# another fixed point on both axes, rather than an ambiguously labeled sweep.
+# Facial-hair cards pair each hidden pose with a visible pose under the same
+# jaw/fit condition. On visible cards, adjust fit safely and retake any still
+# where hair obscures the tip in either camera panel.
 TONGUE_ARC_PROMPTS = [
-    prompt("Fully up, far left", "Point fully upward and as far toward your left as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=-1.0, vertical=1.0), guide="Up 1.00 + Left 1.00", captures=10),
-    prompt("Fully up, half left", "Point fully upward while moving only halfway toward your left. This is up 100%, left 50%.", visible(extension=0.75, horizontal=-0.5, vertical=1.0), guide="Up 1.00 + Left 0.50", captures=10),
-    prompt("Fully up, centered", "Point fully upward with no intentional left or right component.", visible(extension=0.75, horizontal=0.0, vertical=1.0), guide="Up 1.00; X zero", captures=10),
-    prompt("Fully up, half right", "Point fully upward while moving only halfway toward your right. This is up 100%, right 50%.", visible(extension=0.75, horizontal=0.5, vertical=1.0), guide="Up 1.00 + Right 0.50", captures=10),
-    prompt("Fully up, far right", "Point fully upward and as far toward your right as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=1.0, vertical=1.0), guide="Up 1.00 + Right 1.00", captures=10),
-    prompt("Fully down, far left", "Point fully downward and as far toward your left as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=-1.0, vertical=-1.0), guide="Down 1.00 + Left 1.00", captures=10),
-    prompt("Fully down, half left", "Point fully downward while moving only halfway toward your left. This is down 100%, left 50%.", visible(extension=0.75, horizontal=-0.5, vertical=-1.0), guide="Down 1.00 + Left 0.50", captures=10),
-    prompt("Fully down, centered", "Point fully downward with no intentional left or right component.", visible(extension=0.75, horizontal=0.0, vertical=-1.0), guide="Down 1.00; X zero", captures=10),
-    prompt("Fully down, half right", "Point fully downward while moving only halfway toward your right. This is down 100%, right 50%.", visible(extension=0.75, horizontal=0.5, vertical=-1.0), guide="Down 1.00 + Right 0.50", captures=10),
-    prompt("Fully down, far right", "Point fully downward and as far toward your right as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=1.0, vertical=-1.0), guide="Down 1.00 + Right 1.00", captures=10),
+    prompt("Fully up, far left", "Point fully upward and as far toward your left as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=-1.0, vertical=1.0), guide="Up 1.00 + Left 1.00", captures=6),
+    prompt("Fully up, half left", "Point fully upward while moving only halfway toward your left. This is up 100%, left 50%.", visible(extension=0.75, horizontal=-0.5, vertical=1.0), guide="Up 1.00 + Left 0.50", captures=6),
+    prompt("Fully up, centered", "Point fully upward with no intentional left or right component.", visible(extension=0.75, horizontal=0.0, vertical=1.0), guide="Up 1.00; X zero", captures=6),
+    prompt("Fully up, half right", "Point fully upward while moving only halfway toward your right. This is up 100%, right 50%.", visible(extension=0.75, horizontal=0.5, vertical=1.0), guide="Up 1.00 + Right 0.50", captures=6),
+    prompt("Fully up, far right", "Point fully upward and as far toward your right as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=1.0, vertical=1.0), guide="Up 1.00 + Right 1.00", captures=6),
+    prompt("Fully down, far left", "Point fully downward and as far toward your left as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=-1.0, vertical=-1.0), guide="Down 1.00 + Left 1.00", captures=6),
+    prompt("Fully down, half left", "Point fully downward while moving only halfway toward your left. This is down 100%, left 50%.", visible(extension=0.75, horizontal=-0.5, vertical=-1.0), guide="Down 1.00 + Left 0.50", captures=6),
+    prompt("Fully down, centered", "Point fully downward with no intentional left or right component.", visible(extension=0.75, horizontal=0.0, vertical=-1.0), guide="Down 1.00; X zero", captures=6),
+    prompt("Fully down, half right", "Point fully downward while moving only halfway toward your right. This is down 100%, right 50%.", visible(extension=0.75, horizontal=0.5, vertical=-1.0), guide="Down 1.00 + Right 0.50", captures=6),
+    prompt("Fully down, far right", "Point fully downward and as far toward your right as comfortable. Hold the fixed pose before each capture.", visible(extension=0.75, horizontal=1.0, vertical=-1.0), guide="Down 1.00 + Right 1.00", captures=6),
+
+    prompt("Mid diagonal upper-left", "Hold the tip halfway up and halfway toward your left; keep the tongue visible in both panels.", visible(extension=0.75, horizontal=-0.5, vertical=0.5), guide="Up 0.50 + Left 0.50", captures=6),
+    prompt("Mid diagonal upper-right", "Hold the tip halfway up and halfway toward your right; keep the tongue visible in both panels.", visible(extension=0.75, horizontal=0.5, vertical=0.5), guide="Up 0.50 + Right 0.50", captures=6),
+    prompt("Mid diagonal lower-left", "Hold the tip halfway down and halfway toward your left; keep the tongue visible in both panels.", visible(extension=0.75, horizontal=-0.5, vertical=-0.5), guide="Down 0.50 + Left 0.50", captures=6),
+    prompt("Mid diagonal lower-right", "Hold the tip halfway down and halfway toward your right; keep the tongue visible in both panels.", visible(extension=0.75, horizontal=0.5, vertical=-0.5), guide="Down 0.50 + Right 0.50", captures=6),
+
+    prompt("Facial hair, neutral, tongue hidden", "Relax your mouth with facial hair in its normal position. Keep the tongue behind the teeth; vary the lips slightly.", context="facial hair / neutral", captures=6),
+    prompt("Facial hair, neutral, tongue tip", "Keep the same relaxed jaw and hair position. Show only the centered tip, clearly visible in both panels.", visible(extension=0.25), context="facial hair / neutral", guide="TongueOut 0.25; X/Y zero", captures=6),
+    prompt("Facial hair, smile, tongue hidden", "Smile slightly and vary the lip opening. Keep the tongue fully inside despite any moustache or beard shadow.", context="facial hair / smile", captures=6),
+    prompt("Facial hair, smile, tongue tip", "Use the same slight smile and lip opening while showing the centered tongue tip in both panels.", visible(extension=0.25), context="facial hair / smile", guide="TongueOut 0.25; X/Y zero", captures=6),
+    prompt("Facial hair, open jaw, tongue hidden", "Open the jaw comfortably at a few strengths. Keep the tongue behind the teeth while hair and chin remain in view.", context="facial hair / open jaw", captures=6),
+    prompt("Facial hair, open jaw, tongue out", "Use the same comfortable jaw opening and extend the tongue straight forward, visible in both panels.", visible(extension=0.75), context="facial hair / open jaw", guide="TongueOut 0.75; X/Y zero", captures=6),
+    prompt("Facial hair, fit variation, tongue hidden", "Make only small safe headset-fit changes between stills. Keep the tongue hidden and hair naturally in view.", context="facial hair / fit variation", captures=6),
+    prompt("Facial hair, fit variation, tongue out", "Repeat those small headset-fit changes with the tongue centered and visible in both panels. If hair hides the tip, adjust fit safely and retake the still.", visible(extension=0.75), context="facial hair / fit variation", guide="TongueOut 0.75; X/Y zero", captures=6),
 ]
 
 
@@ -365,7 +422,10 @@ class TongueStillCaptureSession:
         temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         temporary.replace(self.path)
 
-    def render(self, strip: np.ndarray, labels_ready: bool) -> np.ndarray:
+    def render(
+        self, strip: np.ndarray, labels_ready: bool, *,
+        factory_values_static: bool = False,
+    ) -> np.ndarray:
         image = np.zeros((820, 1280, 3), dtype=np.uint8)
         current = self.current
         cv2.putText(image, self.title, (24, 42),
@@ -374,7 +434,10 @@ class TongueStillCaptureSession:
             image, f"CARD {self.current_index + 1}/{len(self.prompts)}  {current.name}",
             (24, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (80, 245, 120), 2, cv2.LINE_AA,
         )
-        status = "FACTORY REFERENCE READY" if labels_ready else "MOVE FACE UNTIL FACTORY REFERENCE IS READY"
+        status = (
+            "FACTORY PACKETS READY" if labels_ready
+            else "WAITING FOR VRCFT FACTORY PACKETS"
+        )
         cv2.putText(image, status, (760, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.46,
                     (80, 245, 120) if labels_ready else (80, 80, 255), 1, cv2.LINE_AA)
 
@@ -408,9 +471,15 @@ class TongueStillCaptureSession:
         )
         cv2.putText(image, self.message, (24, 635), cv2.FONT_HERSHEY_SIMPLEX,
                     0.56, (220, 220, 220), 1, cv2.LINE_AA)
+        if factory_values_static:
+            cv2.putText(
+                image, "Face values are static; these pose cards provide the tongue labels.",
+                (24, 668), cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                (80, 220, 255), 1, cv2.LINE_AA,
+            )
         cv2.putText(image, "SPACE capture one still | ENTER next | X undo | B previous | K skip | Q stop safely",
                     (24, 700), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (170, 210, 255), 1, cv2.LINE_AA)
-        cv2.putText(image, "Hold the pose before pressing SPACE. Vary jaw/headset position slightly between captures.",
+        cv2.putText(image, "Keep tongue visible in both views. Adjust fit if facial hair or tape hides it.",
                     (24, 740), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (170, 170, 170), 1, cv2.LINE_AA)
         cv2.putText(image, "Semantics: docs.vrcft.io - Unified Expressions / Parameters",
                     (24, 780), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (130, 130, 130), 1, cv2.LINE_AA)

@@ -19,6 +19,7 @@ if torch.version.hip:
     torch.backends.cudnn.enabled = False
 
 from train_tongue_model import create_model
+from qpro_gpu import validated_torch_device_name
 
 
 TONGUE_PACKET = struct.Struct("<4sBBH12f")
@@ -39,10 +40,9 @@ def vrcft_tongue_values(
     horizontal = float(np.clip(values.get("horizontal", 0.0), -1.0, 1.0))
     vertical = float(np.clip(values.get("vertical", 0.0), -1.0, 1.0))
     twist = float(np.clip(values.get("twist", 0.0), -1.0, 1.0))
-    tongue_out = max(
-        float(np.clip(prediction.fused_visibility, 0.0, 1.0)),
-        float(np.clip(values.get("extension", 0.0), 0.0, 1.0)),
-    )
+    # Visibility is confidence that the tongue is present, not how far it
+    # extends. Using it as TongueOut makes a visible tip jump to full extension.
+    tongue_out = float(np.clip(values.get("extension", 0.0), 0.0, 1.0))
     return np.asarray(
         [
             tongue_out,
@@ -72,6 +72,24 @@ def encode_tongue_packet(values: np.ndarray, enabled: bool) -> bytes:
     )
 
 
+def smooth_tongue_output(
+    previous: np.ndarray, target: np.ndarray, elapsed_seconds: float
+) -> np.ndarray:
+    """Bound per-packet expression changes, including a visibility-gate drop.
+
+    The model's visibility decision is binary, but avatar TongueOut is an
+    analog expression. A short hold protects isolated misses; this slew limit
+    makes genuine entry and retraction gradual after that hold expires.
+    """
+    elapsed = min(max(elapsed_seconds, 0.0), 1.0 / 20.0)
+    maximum_rise = elapsed / 0.18
+    maximum_fall = elapsed / 0.20
+    return np.clip(
+        previous + np.clip(target - previous, -maximum_fall, maximum_rise),
+        0.0, 1.0,
+    ).astype(np.float32)
+
+
 class TongueBroadcaster:
     """Opt-in UDP override; disabled or stale packets restore stock tracking."""
 
@@ -88,6 +106,8 @@ class TongueBroadcaster:
         self.enabled = not self.enabled
         if not self.enabled:
             self._send(np.zeros(12, dtype=np.float32), enabled=False)
+            self._last_values = None
+            self._last_sent = 0.0
         return self.enabled
 
     def send_prediction(
@@ -95,11 +115,19 @@ class TongueBroadcaster:
     ) -> None:
         if not self.enabled:
             return
-        values = vrcft_tongue_values(prediction, target_names)
+        target = vrcft_tongue_values(prediction, target_names)
         now = time.perf_counter()
-        elapsed = now - self._last_sent
-        if elapsed < self._minimum_interval:
+        elapsed = (
+            now - self._last_sent
+            if self._last_values is not None else self._minimum_interval
+        )
+        if self._last_values is not None and elapsed < self._minimum_interval:
             return
+        previous = (
+            self._last_values if self._last_values is not None
+            else np.zeros(12, dtype=np.float32)
+        )
+        values = smooth_tongue_output(previous, target, elapsed)
         changed = (
             self._last_values is None
             or float(np.max(np.abs(values - self._last_values))) >= 0.015
@@ -172,8 +200,7 @@ class LiveTongueModelPreview:
         camera_weight: float | None = None,
     ) -> None:
         self.checkpoint_path = Path(checkpoint_path).resolve()
-        if device_name == "auto":
-            device_name = "cuda:0" if torch.cuda.is_available() else "cpu"
+        device_name = validated_torch_device_name(torch, device_name)
         self.device = torch.device(device_name)
         checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
         self.target_names = list(checkpoint["targetNames"])

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Receive timestamped Virtual Desktop factory labels over localhost UDP."""
+"""Receive timestamped factory reference labels over localhost UDP."""
 
 from __future__ import annotations
 
@@ -195,6 +195,22 @@ class LabelSidecarRecorder:
             and label_age <= 1.0
         )
 
+    def manual_tongue_reference_ready(self) -> bool:
+        """Manual pose cards need fresh factory packets, not changing face values.
+
+        Facial hair, a bandage, or a neutral pose can leave Meta's blendshapes
+        unchanged while the user can still label exact camera stills by hand.
+        Keep the packet age and TongueOut schema checks so a disconnected
+        VRCFT bridge cannot silently produce an unsupervised capture.
+        """
+        age = self.label_age_seconds()
+        return bool(
+            self.sample_count >= 10
+            and "TongueOut" in self.schema_names
+            and age is not None
+            and 0.0 <= age <= 1.0
+        )
+
     def nearest_sample(self, monotonic_ns: int) -> dict[str, object] | None:
         with self._recent_lock:
             if not self._recent_samples:
@@ -272,7 +288,7 @@ def inspect_sidecar(path: str | Path) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Inspect a Qpro Virtual Desktop label sidecar"
+        description="Inspect a Qpro factory reference label sidecar"
     )
     parser.add_argument("sidecar")
     arguments = parser.parse_args()

@@ -11,19 +11,69 @@ param(
 $ErrorActionPreference = "Stop"
 Push-Location $PSScriptRoot
 try {
-    $rocmPython = Join-Path $PSScriptRoot ".venv-rocm\Scripts\python.exe"
-    $useRocm = Test-Path -LiteralPath $rocmPython
-    $python = if ($useRocm) { $rocmPython } elseif (-not [string]::IsNullOrWhiteSpace($env:QPRO_PYTHON)) { $env:QPRO_PYTHON } else { Join-Path $PSScriptRoot ".venv\Scripts\python.exe" }
-    if ($useRocm) {
-        & $python -c "import torch; assert torch.version.hip and torch.cuda.is_available(), 'AMD ROCm GPU is unavailable'; print('Tongue training GPU:', torch.cuda.get_device_name(0))"
-        if ($LASTEXITCODE -ne 0) { throw "The local ROCm runtime exists, but the AMD GPU is unavailable. Training was not started on CPU." }
+    function Test-QproTrainingPython([string]$Candidate) {
+        if ([string]::IsNullOrWhiteSpace($Candidate) -or -not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { return $false }
+        $previousPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            & $Candidate -c "import sys,cv2,numpy,torch; assert sys.version_info[:2] == (3,12) and sys.maxsize > 2**32" *> $null
+            return $LASTEXITCODE -eq 0
+        } catch { return $false }
+        finally { $ErrorActionPreference = $previousPreference }
+    }
+
+    $python = $null
+    Remove-Item Env:QPRO_ROCM_INSTALL_SMOKE_TEST -ErrorAction SilentlyContinue
+    Remove-Item Env:QPRO_ROCM_EXPECTED_GFX_TARGET -ErrorAction SilentlyContinue
+    $rocmCandidates = @(
+        [pscustomobject]@{
+            Name = 'AMD ROCm 10.0'
+            Python = (Join-Path $PSScriptRoot '.venv-rocm-experimental\Scripts\python.exe')
+            ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm-experimental\qpro-rocm-ready.json')
+            TargetFamily = $null
+        },
+        [pscustomobject]@{
+            Name = 'ROCm 7.2.1 fallback'
+            Python = (Join-Path $PSScriptRoot '.venv-rocm\Scripts\python.exe')
+            ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm\qpro-rocm-ready.json')
+            TargetFamily = 'custom'
+        }
+    )
+    foreach ($candidate in $rocmCandidates) {
+        if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $candidate.ReadyMarker -PathType Leaf)) { continue }
+        if ($candidate.TargetFamily) { $env:ROCM_SDK_TARGET_FAMILY = $candidate.TargetFamily }
+        else { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
+        $probePreference = $ErrorActionPreference
+        $probeSucceeded = $false
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $candidate.Python -c "import torch; from qpro_gpu import require_rocm_device_name; d=require_rocm_device_name(torch); print('Tongue training GPU:', torch.cuda.get_device_name(int(d.split(':')[1])), 'on', d)"
+            $probeSucceeded = $LASTEXITCODE -eq 0
+        } catch { Write-Warning "$($candidate.Name) validation failed: $_" }
+        finally { $ErrorActionPreference = $probePreference }
+        if ($probeSucceeded) {
+            $python = $candidate.Python
+            Write-Host "Selected $($candidate.Name) runtime."
+            break
+        }
+        Write-Warning "$($candidate.Name) cannot see a supported discrete Radeon GPU. Trying the next runtime."
+    }
+    if (-not $python) {
+        Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue
+        $sharedPython = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'QproFaceTracking\runtime\.venv\Scripts\python.exe'
+        $candidates = @(
+            $env:QPRO_PYTHON,
+            $sharedPython,
+            (Join-Path $PSScriptRoot '.venv\Scripts\python.exe'),
+            (Join-Path $PSScriptRoot '.venv\Scripts\qpro-python-console.exe')
+        )
+        foreach ($candidate in $candidates) {
+            if (Test-QproTrainingPython $candidate) { $python = $candidate; break }
+        }
+        if (-not $python) { throw 'No working Qpro Python 3.12 training runtime was found. Run Install runtime in the Hub.' }
     }
     Write-Host "PC Python runtime: $python"
-    $pythonFallback = Join-Path $PSScriptRoot ".venv\Scripts\qpro-python-console.exe"
-    if (-not (Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $pythonFallback)) { $python = $pythonFallback }
-    if (-not (Test-Path -LiteralPath $python)) {
-        throw "Python environment missing. Run build-and-run.ps1 once first."
-    }
     $latest = if (-not [string]::IsNullOrWhiteSpace($SessionPath)) {
         Get-Item -LiteralPath ([System.IO.Path]::GetFullPath($SessionPath)) -ErrorAction Stop
     } else {
@@ -52,11 +102,15 @@ try {
         throw "Matching capture is missing: $capture"
     }
     $cache = Join-Path $PSScriptRoot ("training\{0}-tongue-stills-224px" -f [System.IO.Path]::GetFileNameWithoutExtension($capture))
-    if ($Version -eq 0) {
-        $existingVersions = @(Get-ChildItem .\models -Filter "qpro-stereo-tongue-v*-gate.pt" -File -ErrorAction SilentlyContinue | ForEach-Object {
-            if ($_.Name -match '^qpro-stereo-tongue-v(?<v>\d+)-gate\.pt$') { [int]$Matches.v }
+    # A failed run can leave a direction or TorchScript file without a gate.
+    # Reserve a version only when none of its artifacts already exists.
+    $occupiedVersions = @(Get-ChildItem .\models -Filter "qpro-stereo-tongue-v*" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Name -match '^qpro-stereo-tongue-v(?<v>\d+)(?:[.-]|$)') { [int]$Matches.v }
         })
-        $Version = if ($existingVersions.Count) { (($existingVersions | Measure-Object -Maximum).Maximum + 1) } else { 1 }
+    if ($Version -eq 0) {
+        $Version = if ($occupiedVersions.Count) { (($occupiedVersions | Measure-Object -Maximum).Maximum + 1) } else { 1 }
+    } elseif ($occupiedVersions -contains $Version) {
+        throw "Tongue model v$Version already has files. Choose an unused version to preserve existing weights."
     }
     $gateOutput = ".\models\qpro-stereo-tongue-v$Version-gate.pt"
     $directionOutput = ".\models\qpro-stereo-tongue-v$Version-direction.pt"
@@ -64,8 +118,13 @@ try {
     Write-Host "Preparing exact manually selected stereo stills from $capture"
     & $python .\prepare_tongue_stills.py $capture --output $cache --size 224
     if ($LASTEXITCODE -ne 0) { throw "Preparing the manual still dataset failed." }
-    $device = @(& $python -c "import torch; print('cuda:0' if torch.cuda.is_available() else 'cpu')" | Select-Object -Last 1)[0].Trim()
-    if ($LASTEXITCODE -ne 0 -or $device -notin @("cuda:0", "cpu")) { throw "Could not determine the PyTorch training device. Run PC runtime setup again." }
+    $deviceOutput = @(& $python -c "import torch; from qpro_gpu import preferred_torch_device_name; print(preferred_torch_device_name(torch))" | Select-Object -Last 1)
+    $deviceExitCode = $LASTEXITCODE
+    if ($deviceExitCode -ne 0 -or $deviceOutput.Count -eq 0) {
+        throw "Could not determine the PyTorch training device (Python exit code $deviceExitCode). Check the preceding Activity output, then run PC runtime setup again."
+    }
+    $device = $deviceOutput[0].ToString().Trim()
+    if ($device -ne 'cpu' -and $device -notmatch '^cuda:\d+$') { throw "Unsupported PyTorch training device: $device" }
     $effectiveBatchSize = if ($device -eq "cpu") { [Math]::Min($BatchSize, 16) } else { $BatchSize }
     Write-Host "TRAIN_DEVICE device=$device batch=$effectiveBatchSize"
     if ($device -eq "cpu") { Write-Warning "CUDA is unavailable. CPU fallback is active; full-dataset training may take hours. NVIDIA users should rerun PC runtime setup after installing the current NVIDIA driver." }

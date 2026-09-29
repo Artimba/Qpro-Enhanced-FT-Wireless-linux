@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -16,6 +17,69 @@ from dataset_inspect import load_labels
 from prepare_training import nearest_label_indices
 from prepare_tongue_training import FACE_HEIGHT
 from tongue_calibration import TONGUE_TARGET_NAMES
+
+
+def validate_focused_arc_session(session: dict[str, object]) -> None:
+    """Require the new focus cards before treating an arc capture as training data.
+
+    Old arc-v3 journals contain only the original ten cards and remain usable.
+    The presence of any new card identifies the expanded curriculum, whose
+    facial-hair pairs and mid-diagonal corners must all have usable stills.
+    """
+    if session.get("sessionType") != "tongue-stereo-arc-v3":
+        return
+    prompts = session.get("prompts", [])
+    hair = [
+        (index, card) for index, card in enumerate(prompts)
+        if str(card.get("context", "")).startswith("facial hair / ")
+    ]
+    mid = [
+        (index, card) for index, card in enumerate(prompts)
+        if str(card.get("name", "")).startswith("Mid diagonal ")
+    ]
+    if not hair and not mid:
+        return
+
+    expected_contexts = {
+        "facial hair / neutral", "facial hair / smile",
+        "facial hair / open jaw", "facial hair / fit variation",
+    }
+    contexts = {str(card["context"]) for _, card in hair}
+    if contexts != expected_contexts or len(hair) != 8:
+        raise ValueError("Focused arc session is missing a facial-hair hidden/visible pair")
+    for context in expected_contexts:
+        pair = [card for _, card in hair if card["context"] == context]
+        if len(pair) != 2 or sorted(
+            float(card.get("targets", {}).get("visibility", 0.0)) for card in pair
+        ) != [0.0, 1.0]:
+            raise ValueError(f"Focused arc session has an invalid facial-hair pair: {context}")
+
+    corners = {
+        (
+            float(card.get("targets", {}).get("horizontal", 0.0)),
+            float(card.get("targets", {}).get("vertical", 0.0)),
+        )
+        for _, card in mid
+    }
+    if len(mid) != 4 or corners != {
+        (-0.5, 0.5), (0.5, 0.5), (-0.5, -0.5), (0.5, -0.5)
+    }:
+        raise ValueError("Focused arc session is missing a mid-diagonal corner")
+
+    active_samples = [sample for sample in session.get("samples", []) if not sample.get("excluded")]
+    counts = Counter(int(sample["promptIndex"]) for sample in active_samples)
+    for index, card in hair + mid:
+        minimum = max(4, int(card.get("minimum_captures", 4)))
+        if counts[index] < minimum:
+            raise ValueError(
+                f"Focused arc card '{card['name']}' has {counts[index]} usable stills; "
+                f"at least {minimum} are required. Recapture this card before training."
+            )
+        if any(
+            sample.get("targets", {}) != card.get("targets", {})
+            for sample in active_samples if int(sample["promptIndex"]) == index
+        ):
+            raise ValueError(f"Focused arc card '{card['name']}' has mismatched target labels")
 
 
 def main() -> int:
@@ -43,8 +107,6 @@ def main() -> int:
         if arguments.output
         else Path("training") / f"{capture_path.stem}-tongue-stills-{arguments.size}px"
     )
-    output.mkdir(parents=True, exist_ok=True)
-
     session = json.loads(session_path.read_text(encoding="utf-8"))
     allowed_session_types = {
         "tongue-stereo-stills-v1",
@@ -54,6 +116,7 @@ def main() -> int:
     }
     if session.get("sessionType") not in allowed_session_types:
         raise ValueError("A manual tongue still or correction session is required")
+    validate_focused_arc_session(session)
     entries, frame_width = scan_stereo_mouth_stills(capture_path)
     frame_count = len(entries)
     frame_times = [timestamp for _offset, timestamp in entries]
@@ -77,6 +140,7 @@ def main() -> int:
             f"Worst still/factory-label alignment is {float(np.max(errors_ms)):.2f} ms"
         )
 
+    output.mkdir(parents=True, exist_ok=True)
     shape = (frame_count, 2, arguments.size, arguments.size)
     images = np.lib.format.open_memmap(
         output / "images.npy", mode="w+", dtype=np.uint8, shape=shape

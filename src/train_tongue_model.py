@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
 from pathlib import Path
@@ -20,9 +21,39 @@ from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from tongue_visibility_calibration import (
     choose_visibility_gate, classification_at_threshold, f1_at_threshold,
 )
+from qpro_gpu import validated_torch_device_name
 
 
 SIGNED_TARGETS = {"horizontal", "vertical", "twist"}
+
+
+def parent_checkpoint_metadata(path: str | Path | None) -> tuple[str | None, str | None]:
+    """Keep a verifiable parent reference without embedding a private PC path."""
+    if path is None:
+        return None, None
+    source = Path(path).resolve(strict=True)
+    digest = hashlib.sha256()
+    with source.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return source.name, digest.hexdigest()
+
+
+def shade_local_mouth_area(
+    images: torch.Tensor, top: int, left: int, height: int, width: int,
+    strength: float,
+) -> torch.Tensor:
+    """Dim a small, soft region in both views without hiding tongue geometry.
+
+    Beard, moustache, bandage, and IR illumination can alter local contrast.
+    This training-only perturbation leaves the labels and stereo geometry
+    intact; a wearer's own labeled capture is still needed to measure quality.
+    """
+    vertical = (1.0 - torch.linspace(-1.0, 1.0, height).abs()).clamp_min(0.0)
+    horizontal = (1.0 - torch.linspace(-1.0, 1.0, width).abs()).clamp_min(0.0)
+    attenuation = 1.0 - strength * torch.outer(vertical, horizontal)
+    images[:, top:top + height, left:left + width].mul_(attenuation)
+    return images
 
 
 class TongueFrames(Dataset):
@@ -45,6 +76,20 @@ class TongueFrames(Dataset):
             images.mul_(contrast).add_(brightness).clamp_(0, 1)
             if random.random() < 0.15:
                 images.add_(torch.randn_like(images) * random.uniform(0.0, 0.015)).clamp_(0, 1)
+            if random.random() < 0.25:
+                # A modest local contrast change helps refinement avoid relying
+                # on one bare-skin appearance. Apply the same soft area to both
+                # cameras and never replace pixels with a solid occluder: the
+                # tongue target must remain visible in the training example.
+                size = images.shape[-1]
+                width = random.randint(max(8, size // 8), max(9, size // 3))
+                height = random.randint(max(8, size // 12), max(9, size // 4))
+                left = random.randint(size // 6, min(size - width, size * 2 // 3))
+                top = random.randint(size // 3, min(size - height, size * 2 // 3))
+                shade_local_mouth_area(
+                    images, top, left, height, width,
+                    random.uniform(0.12, 0.28),
+                )
             if random.random() < 0.70:
                 # Apply one geometric perturbation to both synchronized views;
                 # independent crops would manufacture false stereo disparity.
@@ -219,6 +264,12 @@ def blocked_train_validation_split(
                 holdout[-max(1, len(selected) // 5):] = True
         training.append(selected[~holdout])
         validation.append(selected[holdout])
+    if not training:
+        # A capture can be completed after skipping most cards. Let main()
+        # report its explicit insufficient-samples error instead of NumPy's
+        # opaque "need at least one array to concatenate" exception.
+        empty = np.empty(0, dtype=np.int64)
+        return empty, empty.copy()
     return np.concatenate(training), np.concatenate(validation)
 
 
@@ -327,11 +378,91 @@ def run_training_epoch(
     return total / max(1, count)
 
 
+def heldout_pose_metrics(
+    prediction: np.ndarray,
+    target: np.ndarray,
+    native: np.ndarray,
+    step_ids: np.ndarray,
+    target_names: list[str],
+    camera_weight: float,
+    threshold: float,
+) -> dict[str, object]:
+    """Audit prompt cards using the chosen global visibility gate.
+
+    Pose-card targets are instructions, not verified physical tongue labels.
+    These diagnostics expose weak poses in this capture; they cannot measure
+    generalization to a different wearer.
+    """
+    if not (len(prediction) == len(target) == len(native) == len(step_ids)):
+        raise ValueError("Held-out pose metrics require aligned frames and prompt IDs")
+    visibility_index = target_names.index("visibility")
+    horizontal_index = target_names.index("horizontal")
+    vertical_index = target_names.index("vertical")
+    expected_visible = target[:, visibility_index] >= 0.5
+    fused_visibility = (
+        camera_weight * prediction[:, visibility_index]
+        + (1.0 - camera_weight) * native
+    )
+    missed_visible = expected_visible & (fused_visibility < threshold)
+    false_visible = ~expected_visible & (fused_visibility >= threshold)
+    direction_error = np.abs(
+        prediction[:, [horizontal_index, vertical_index]]
+        - target[:, [horizontal_index, vertical_index]]
+    ).mean(axis=1)
+
+    def summarize(mask: np.ndarray) -> dict[str, object]:
+        visible = mask & expected_visible
+        hidden = mask & ~expected_visible
+        visible_count = int(np.count_nonzero(visible))
+        hidden_count = int(np.count_nonzero(hidden))
+        missed_count = int(np.count_nonzero(mask & missed_visible))
+        false_count = int(np.count_nonzero(mask & false_visible))
+        return {
+            "samples": int(np.count_nonzero(mask)),
+            "visibleSamples": visible_count,
+            "missedVisible": missed_count,
+            "visibilityFalseNegativeRate": (
+                missed_count / visible_count if visible_count else None
+            ),
+            "hiddenSamples": hidden_count,
+            "falseVisible": false_count,
+            "visibilityFalsePositiveRate": (
+                false_count / hidden_count if hidden_count else None
+            ),
+            "directionMae": (
+                float(np.mean(direction_error[visible])) if visible_count else None
+            ),
+        }
+
+    per_prompt = []
+    for step_id in np.unique(step_ids):
+        result = summarize(step_ids == step_id)
+        result["promptId"] = int(step_id)
+        per_prompt.append(result)
+
+    horizontal = target[:, horizontal_index]
+    vertical = target[:, vertical_index]
+    diagonals = expected_visible & (np.abs(horizontal) >= 0.4) & (np.abs(vertical) >= 0.4)
+    corners = []
+    for name, horizontal_sign, vertical_sign in (
+        ("upper-left", -1, 1),
+        ("upper-right", 1, 1),
+        ("lower-left", -1, -1),
+        ("lower-right", 1, -1),
+    ):
+        mask = diagonals & (horizontal * horizontal_sign > 0) & (vertical * vertical_sign > 0)
+        result = summarize(mask)
+        result["corner"] = name
+        corners.append(result)
+    return {"perPrompt": per_prompt, "diagonalCorners": corners}
+
+
 def evaluate(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
     target_names: list[str],
+    step_ids: np.ndarray | None = None,
 ) -> dict[str, object]:
     model.eval()
     predictions: list[np.ndarray] = []
@@ -366,7 +497,7 @@ def evaluate(
     best_camera_weight, best_threshold, best_classification = choose_visibility_gate(
         camera_visibility, native, expected_visibility
     )
-    return {
+    metrics = {
         "mae": float(np.mean(absolute)),
         "activeMae": float(np.mean(absolute[active])) if np.any(active) else 0.0,
         "perTarget": per_target,
@@ -388,6 +519,12 @@ def evaluate(
         "fusedVisibilityFalsePositiveRate": best_classification["falsePositiveRate"],
         "fusedVisibilityFalseNegativeRate": best_classification["falseNegativeRate"],
     }
+    if step_ids is not None:
+        metrics.update(heldout_pose_metrics(
+            prediction, target, native, np.asarray(step_ids), target_names,
+            best_camera_weight, best_threshold,
+        ))
+    return metrics
 
 
 def checkpoint_score(metrics: dict[str, object], focus: str) -> tuple[float, str]:
@@ -467,6 +604,7 @@ def main() -> int:
     )
     if not len(train_indices) or not len(validation_indices):
         raise ValueError("Dataset does not contain enough repeated samples for a train/validation split")
+    validation_step_ids = np.asarray(step_ids[validation_indices], dtype=np.int64)
     weights = balanced_step_weights(step_ids, train_indices)
     train_data = TongueFrames(cache, train_indices, augment=True)
     validation_data = TongueFrames(cache, validation_indices, augment=False)
@@ -476,10 +614,10 @@ def main() -> int:
         replacement=True,
         generator=torch.Generator().manual_seed(seed),
     )
-    selected_device = "cuda:0" if arguments.device == "auto" and torch.cuda.is_available() else ("cpu" if arguments.device == "auto" else arguments.device)
+    selected_device = validated_torch_device_name(torch, arguments.device)
     device = torch.device(selected_device)
     if device.type == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested but PyTorch cannot access an NVIDIA GPU")
+        raise RuntimeError("GPU acceleration was requested but PyTorch cannot access the selected GPU")
     train_loader = DataLoader(
         train_data,
         batch_size=arguments.batch_size,
@@ -507,6 +645,7 @@ def main() -> int:
     output = Path(arguments.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     best_score = float("inf")
+    parent_name, parent_sha256 = parent_checkpoint_metadata(arguments.initial_checkpoint)
 
     def save_checkpoint(metrics: dict[str, object], score_description: str, epoch: int) -> None:
         # Save a CPU copy so users can load the personal model on another PC.
@@ -529,10 +668,8 @@ def main() -> int:
                 "checkpointScore": score_description,
                 "checkpointFocus": arguments.checkpoint_focus,
                 "checkpointEpoch": epoch,
-                "parentCheckpoint": (
-                    str(Path(arguments.initial_checkpoint).resolve())
-                    if arguments.initial_checkpoint else None
-                ),
+                "parentCheckpoint": parent_name,
+                "parentCheckpointSha256": parent_sha256,
                 "visibilityGate": {
                     "formula": "w * camera_visibility + (1-w) * native_TongueOut",
                     "cameraWeight": metrics["fusedVisibilityCameraWeight"],
@@ -546,7 +683,9 @@ def main() -> int:
     if arguments.initial_checkpoint:
         # A short personal refinement can be worse than its starting model.
         # Keep the original weights when no epoch improves held-out poses.
-        baseline_metrics = evaluate(model, validation_loader, device, target_names)
+        baseline_metrics = evaluate(
+            model, validation_loader, device, target_names, validation_step_ids
+        )
         best_score, description = checkpoint_score(
             baseline_metrics, arguments.checkpoint_focus
         )
@@ -565,7 +704,9 @@ def main() -> int:
             model, train_loader, optimizer, scaler, device, target_names,
             arguments.checkpoint_focus,
         )
-        metrics = evaluate(model, validation_loader, device, target_names)
+        metrics = evaluate(
+            model, validation_loader, device, target_names, validation_step_ids
+        )
         trained_active_maes = [
             float(value["activeMae"])
             for name, value in metrics["perTarget"].items()
@@ -604,6 +745,33 @@ def main() -> int:
         f"fused visibility F1={metrics['fusedVisibilityF1']:.3f} at "
         f"{metrics['fusedVisibilityThreshold']:.2f}"
     )
+    visible_cards = [
+        card for card in metrics["perPrompt"] if card["visibleSamples"]
+    ]
+    worst_cards = sorted(
+        visible_cards,
+        key=lambda card: (
+            card["visibilityFalseNegativeRate"], card["directionMae"],
+        ),
+        reverse=True,
+    )[:4]
+    for card in worst_cards:
+        print(
+            f"HELDOUT_POSE card={card['promptId'] + 1} "
+            f"visible={card['visibleSamples']} missed={card['missedVisible']} "
+            f"fnr={card['visibilityFalseNegativeRate']:.3f} "
+            f"direction_mae={card['directionMae']:.3f}",
+            flush=True,
+        )
+    for corner in metrics["diagonalCorners"]:
+        if corner["visibleSamples"]:
+            print(
+                f"HELDOUT_DIAGONAL corner={corner['corner']} "
+                f"visible={corner['visibleSamples']} missed={corner['missedVisible']} "
+                f"fnr={corner['visibilityFalseNegativeRate']:.3f} "
+                f"direction_mae={corner['directionMae']:.3f}",
+                flush=True,
+            )
     print(f"MODEL {output}")
     if device.type == "cuda" and torch.version.hip:
         # Windows ROCm can leave the Python process alive after training unless
