@@ -580,6 +580,7 @@ def main() -> int:
     tongue_still_session: TongueStillCaptureSession | None = None
     calibration_completed = False
     labels_live_reported: bool | None = None
+    manual_reference_reported: bool | None = None
     prompt_window_name = (
         "Quest Pro tongue training capture"
         if (arguments.tongue_calibration or arguments.tongue_still_calibration
@@ -674,6 +675,11 @@ def main() -> int:
                     f"{len(tongue_still_session.prompts)} cards; "
                     "SPACE saves exactly one synchronized pair"
                 )
+                print(
+                    "Capture guidance: keep the tongue visible in both camera "
+                    "views; with facial hair, vary jaw and headset fit slightly "
+                    "between stills. Reposition if hair or tape covers the tongue."
+                )
         if not arguments.no_labels and (
             arguments.record is not None
             or arguments.model is not None
@@ -689,7 +695,7 @@ def main() -> int:
                 label_path, port=arguments.labels_port
             )
             print(
-                f"Listening for timestamped Virtual Desktop labels on "
+                f"Listening for timestamped factory reference labels on "
                 f"127.0.0.1:{arguments.labels_port}"
             )
         if arguments.model is not None:
@@ -1088,15 +1094,22 @@ def main() -> int:
             if tongue_still_session is not None:
                 labels_ready_now = bool(
                     label_recorder is not None
-                    and label_recorder.sample_count >= 10
-                    and label_recorder.source_change_sequence >= 3
+                    and label_recorder.manual_tongue_reference_ready()
                 )
-                labels_live_reported = bool(labels_live_reported or labels_ready_now)
+                if labels_ready_now != manual_reference_reported:
+                    print(
+                        "LABEL_PREFLIGHT_OK mode=manual-stills packets=fresh; "
+                        "pose cards provide tongue targets"
+                        if labels_ready_now else
+                        "LABEL_PREFLIGHT_WAITING mode=manual-stills; "
+                        "start the selected tracking app, SteamVR, and VRCFaceTracking"
+                    )
+                    manual_reference_reported = labels_ready_now
                 for calibration_key in shared.take_calibration_keys():
-                    if calibration_key == " " and not labels_live_reported:
+                    if calibration_key == " " and not labels_ready_now:
                         action = "not_ready"
                         tongue_still_session.message = (
-                            "Factory reference is not ready yet; move your face briefly."
+                            "Waiting for fresh factory reference packets from the selected tracking source."
                         )
                     else:
                         action = tongue_still_session.handle_key(calibration_key)
@@ -1107,7 +1120,17 @@ def main() -> int:
                         shared.running = False
                 cv2.imshow(
                     prompt_window_name,
-                    tongue_still_session.render(strip, bool(labels_live_reported)),
+                    tongue_still_session.render(
+                        strip, labels_ready_now,
+                        factory_values_static=bool(
+                            labels_ready_now and label_recorder is not None
+                            and (
+                                label_recorder.source_change_sequence < 3
+                                or (label_recorder.source_unchanged_ms is not None
+                                    and label_recorder.source_unchanged_ms > 3_000)
+                            )
+                        ),
+                    ),
                 )
             if (capture_writer is not None and arguments.record_seconds > 0
                     and capture_started_ns is not None
@@ -1176,7 +1199,7 @@ def main() -> int:
                     )
             else:
                 print(
-                    "WARNING: no Virtual Desktop labels were received. The camera capture "
+                    "WARNING: no factory reference labels were received from the selected tracking source. The camera capture "
                     "is valid but is not yet a supervised training dataset."
                 )
     return 0

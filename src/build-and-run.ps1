@@ -17,6 +17,8 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$LabelsPort = 27274,
     [switch]$NoLabels,
+    [ValidateSet("VirtualDesktop", "SteamLink")]
+    [string]$TrackingSource = "VirtualDesktop",
     [switch]$Calibration,
     [switch]$TongueCalibration,
     [switch]$TongueStillCalibration,
@@ -158,6 +160,15 @@ if ($needsNativeBuild) {
 Push-Location $PSScriptRoot
 try {
     Write-Host "QproFaceTracking launcher v2.35 (stream port $StreamPort)"
+    $sourceConfig = Join-Path $env:LOCALAPPDATA "QproFaceTracking\config\tracking-source.txt"
+    $savedSource = if (Test-Path -LiteralPath $sourceConfig -PathType Leaf) {
+        (Get-Content -LiteralPath $sourceConfig -Raw).Trim().ToLowerInvariant()
+    } else { "virtual-desktop" }
+    $requestedSource = if ($TrackingSource -eq "SteamLink") { "steam-link" } else { "virtual-desktop" }
+    if ($savedSource -ne $requestedSource) {
+        throw "The launcher selected $TrackingSource, but the Qpro module is configured for $savedSource. Install the matching source module in First-time setup, then restart VRCFaceTracking before retrying."
+    }
+    Write-Host "Tracking source: $TrackingSource"
     if (-not [string]::IsNullOrWhiteSpace($AdbTarget)) {
         $adbState = & $adbExecutable get-state 2>&1
         if ($LASTEXITCODE -ne 0 -or ($adbState -join "`n").Trim() -ne "device") {
@@ -200,6 +211,32 @@ try {
     $recordEnabled = $Record -or $Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or -not [string]::IsNullOrWhiteSpace($RecordPath)
     $labelsEnabled = ($recordEnabled -or $ModelPreview -or $TonguePreview -or $EyeCalibration -or $HybridPreview) -and -not $NoLabels
     $vrcftRequired = $Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or $ModelPreview -or $TonguePreview -or $PupilOutput -or $EyeCalibration -or $HybridPreview
+    if ($TrackingSource -eq "SteamLink" -and $labelsEnabled) {
+        if ($LabelsPort -ne 27274) { throw "Steam Link training labels use port 27274; omit -LabelsPort or set it to 27274." }
+        $vrcftRequired = $true
+        Write-Host "Steam Link labels: the Qpro VRCFaceTracking module must receive OSC on port 9015 and publish factory reference packets to 127.0.0.1:$LabelsPort."
+        Write-Host "On the headset, enable Steam Link Advanced Settings > OSC, Share eye tracking, Share face tracking, and set OSC Output Port to 9015."
+    }
+    if ($vrcftRequired) {
+        $sourceDisplayName = if ($TrackingSource -eq "SteamLink") { "Steam Link" } else { "Virtual Desktop" }
+        $moduleName = if ($TrackingSource -eq "SteamLink") { "000-Qpro.SteamLink.dll" } else { "000-Qpro.VirtualDesktop.dll" }
+        $otherModuleName = if ($TrackingSource -eq "SteamLink") { "000-Qpro.VirtualDesktop.dll" } else { "000-Qpro.SteamLink.dll" }
+        $customLibs = Join-Path $env:APPDATA "VRCFaceTracking\CustomLibs"
+        $qproModule = Join-Path $customLibs $moduleName
+        $packagedModule = Join-Path $PSScriptRoot "vrcft-gaze-bridge\bin\Release\net10.0\Qpro.GazeBridge.dll"
+        if (-not (Test-Path -LiteralPath $qproModule -PathType Leaf)) {
+            throw "The Qpro $sourceDisplayName VRCFaceTracking module is not installed. Close VRCFaceTracking, use First-time setup > Install $sourceDisplayName module, then reopen VRCFaceTracking."
+        }
+        if ((Test-Path -LiteralPath (Join-Path $customLibs $otherModuleName)) -or
+            (Test-Path -LiteralPath (Join-Path $customLibs "000-Qpro.IndependentGaze.dll"))) {
+            throw "More than one Qpro VRCFaceTracking module is installed. Close VRCFaceTracking and reinstall the selected $sourceDisplayName module from First-time setup."
+        }
+        if (-not (Test-Path -LiteralPath $packagedModule -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $qproModule -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath $packagedModule -Algorithm SHA256).Hash) {
+            throw "The installed Qpro VRCFaceTracking module does not match this build. Close VRCFaceTracking and reinstall the $sourceDisplayName module from First-time setup."
+        }
+    }
     $steamVrRequired = $vrcftRequired -or $EyeCalibration
     $openSourceModelsRequired = $OpenSourcePreview -or $EyeCalibration -or $HybridPreview
     if ($RecordSeconds -gt 0 -and -not $recordEnabled) {
@@ -208,7 +245,7 @@ try {
     if ($Calibration -and $CameraMode -ne "all") { throw "Calibration requires -CameraMode all (the default)." }
     if ($Calibration -and $NoWindow) { throw "Calibration requires the visible prompt window." }
     if ($Calibration -and $RecordSeconds -gt 0) { throw "Calibration controls its own duration; do not set RecordSeconds." }
-    if ($Calibration -and $NoLabels) { throw "Calibration requires Virtual Desktop factory labels." }
+    if ($Calibration -and $NoLabels) { throw "Calibration requires factory labels from the selected tracking source." }
     if ($TongueCalibration -and $NoWindow) { throw "TongueCalibration requires the visible prompt window." }
     if ($TongueCalibration -and $RecordSeconds -gt 0) { throw "TongueCalibration controls its own duration; do not set RecordSeconds." }
     if ($TongueCalibration -and $NoLabels) { throw "TongueCalibration requires the native TongueOut reference stream." }
@@ -242,7 +279,7 @@ try {
     }
     if ($ModelPreview -and $CameraMode -ne "all") { throw "ModelPreview requires -CameraMode all (the default)." }
     if ($ModelPreview -and $NoWindow) { throw "ModelPreview requires visible comparison windows." }
-    if ($ModelPreview -and $NoLabels) { throw "ModelPreview requires Virtual Desktop factory labels." }
+    if ($ModelPreview -and $NoLabels) { throw "ModelPreview requires factory labels from the selected tracking source." }
     if ($ModelPreview -and -not (Test-Path -LiteralPath $ModelPath)) { throw "Model checkpoint not found: $ModelPath" }
     if ($TonguePreview -and $NoLabels) { throw "TonguePreview requires native TongueOut confidence." }
     if ($TonguePreview -and -not (Test-Path -LiteralPath $TongueModelPath)) { throw "Tongue model not found: $TongueModelPath" }
@@ -274,13 +311,44 @@ try {
         throw "Start SteamVR first. SteamVR's vrserver process was not found."
     }
 
-    $rocmPython = Join-Path $PSScriptRoot ".venv-rocm\Scripts\python.exe"
-    $useRocm = $TonguePreview -and (Test-Path -LiteralPath $rocmPython)
-    $python = if ($useRocm) { $rocmPython } elseif (-not [string]::IsNullOrWhiteSpace($env:QPRO_PYTHON)) { $env:QPRO_PYTHON } else { Join-Path $PSScriptRoot ".venv\Scripts\python.exe" }
-    if ($useRocm) {
-        & $python -c "import torch; assert torch.version.hip and torch.cuda.is_available(), 'AMD ROCm GPU is unavailable'; print('Tongue model GPU:', torch.cuda.get_device_name(0))"
-        if ($LASTEXITCODE -ne 0) { throw "The local ROCm runtime exists, but the AMD GPU is unavailable. Tongue tracking was not started on CPU." }
+    $rocmPython = $null
+    Remove-Item Env:QPRO_ROCM_INSTALL_SMOKE_TEST -ErrorAction SilentlyContinue
+    Remove-Item Env:QPRO_ROCM_EXPECTED_GFX_TARGET -ErrorAction SilentlyContinue
+    if ($TonguePreview) {
+        $rocmCandidates = @(
+            [pscustomobject]@{
+                Name = 'AMD ROCm 10.0'
+                Python = (Join-Path $PSScriptRoot '.venv-rocm-experimental\Scripts\python.exe')
+                ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm-experimental\qpro-rocm-ready.json')
+                TargetFamily = $null
+            },
+            [pscustomobject]@{
+                Name = 'ROCm 7.2.1 fallback'
+                Python = (Join-Path $PSScriptRoot '.venv-rocm\Scripts\python.exe')
+                ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm\qpro-rocm-ready.json')
+                TargetFamily = 'custom'
+            }
+        )
+        foreach ($candidate in $rocmCandidates) {
+            if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $candidate.ReadyMarker -PathType Leaf)) { continue }
+            if ($candidate.TargetFamily) { $env:ROCM_SDK_TARGET_FAMILY = $candidate.TargetFamily }
+            else { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
+            $probeSucceeded = $false
+            try {
+                & $candidate.Python -c "import torch; from qpro_gpu import require_rocm_device_name; d=require_rocm_device_name(torch); print('Tongue model GPU:', torch.cuda.get_device_name(int(d.split(':')[1])), 'on', d)"
+                $probeSucceeded = $LASTEXITCODE -eq 0
+            } catch { Write-Warning "$($candidate.Name) validation failed: $_" }
+            if ($probeSucceeded) {
+                $rocmPython = $candidate.Python
+                Write-Host "Selected $($candidate.Name) runtime."
+                break
+            }
+            Write-Warning "$($candidate.Name) cannot see a supported discrete Radeon GPU. Trying the next runtime."
+        }
     }
+    if (-not $rocmPython) { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
+    $python = if ($rocmPython) { $rocmPython } elseif (-not [string]::IsNullOrWhiteSpace($env:QPRO_PYTHON)) { $env:QPRO_PYTHON } else { Join-Path $PSScriptRoot ".venv\Scripts\python.exe" }
     Write-Host "PC Python runtime: $python"
     $pythonFallback = Join-Path $PSScriptRoot ".venv\Scripts\qpro-python-console.exe"
     if (-not (Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $pythonFallback)) {
@@ -313,7 +381,7 @@ try {
         }
     }
 
-    if ($labelsEnabled) {
+    if ($labelsEnabled -and $TrackingSource -eq "VirtualDesktop") {
         $labelBridgeExe = Join-Path $PSScriptRoot "vd-label-bridge\bin\Release\net10.0\Qpro.VirtualDesktopLabelBridge.exe"
         if ($RebuildManaged -or -not (Test-Path -LiteralPath $labelBridgeExe)) {
             $labelBridgeProject = Join-Path $PSScriptRoot "vd-label-bridge\Qpro.VirtualDesktopLabelBridge.csproj"
@@ -422,7 +490,7 @@ try {
 
     $capText = if ($MaxFps -eq 0) { "unlimited" } else { "$MaxFps FPS" }
     Write-Host "Transport mode: $CameraMode; cap: $capText"
-    if ($labelsEnabled) {
+    if ($labelsEnabled -and $TrackingSource -eq "VirtualDesktop") {
         $labelLogRoot = Join-Path $env:LOCALAPPDATA 'QproFaceTracking\runtime\logs'
         New-Item -ItemType Directory -Force -Path $labelLogRoot | Out-Null
         $labelOutputPath = Join-Path $labelLogRoot "label-bridge-$PID-output.txt"

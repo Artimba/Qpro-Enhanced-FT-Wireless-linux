@@ -2,6 +2,7 @@ import struct
 import threading
 import time
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -12,8 +13,10 @@ from tongue_model_preview import (
     TONGUE_VERSION,
     TonguePrediction,
     TongueInferenceWorker,
+    TongueBroadcaster,
     TongueVisibilityHold,
     encode_tongue_packet,
+    smooth_tongue_output,
     vrcft_tongue_values,
 )
 from tongue_calibration import TONGUE_TARGET_NAMES
@@ -33,7 +36,7 @@ class TongueVrcftOutputTests(unittest.TestCase):
     def test_signed_model_heads_map_to_separate_vrcft_channels(self):
         values = vrcft_tongue_values(self.prediction(), list(TONGUE_TARGET_NAMES))
         self.assertEqual(values.shape, (12,))
-        self.assertAlmostEqual(float(values[0]), 0.8)
+        self.assertAlmostEqual(float(values[0]), 0.7)
         self.assertAlmostEqual(float(values[1]), 0.4)
         self.assertEqual(float(values[2]), 0.0)
         self.assertAlmostEqual(float(values[3]), 0.6)
@@ -47,6 +50,48 @@ class TongueVrcftOutputTests(unittest.TestCase):
             self.prediction(visible=False), list(TONGUE_TARGET_NAMES)
         )
         self.assertFalse(np.any(values))
+
+    def test_visibility_confidence_does_not_force_full_extension(self):
+        prediction = self.prediction()
+        prediction.values[TONGUE_TARGET_NAMES.index("extension")] = 0.25
+        values = vrcft_tongue_values(prediction, list(TONGUE_TARGET_NAMES))
+        self.assertAlmostEqual(float(values[0]), 0.25)
+
+    def test_visibility_gate_drop_retracts_analog_values_over_multiple_packets(self):
+        broadcaster = TongueBroadcaster(enabled=True)
+        packets = []
+        broadcaster._send = lambda values, *, enabled: packets.append(
+            (values.copy(), enabled)
+        )
+        try:
+            with mock.patch("tongue_model_preview.time.perf_counter", side_effect=[
+                10.00, 10.05, 10.10, 10.15,
+                10.20, 10.25, 10.30, 10.35,
+            ]):
+                for _ in range(4):
+                    broadcaster.send_prediction(
+                        self.prediction(), list(TONGUE_TARGET_NAMES)
+                    )
+                rise_count = len(packets)
+                for _ in range(4):
+                    broadcaster.send_prediction(
+                        self.prediction(visible=False), list(TONGUE_TARGET_NAMES)
+                    )
+            tongue_out = [float(values[0]) for values, enabled in packets if enabled]
+            self.assertGreater(tongue_out[0], 0.0)
+            self.assertLess(tongue_out[0], 0.8)
+            self.assertGreater(tongue_out[rise_count], 0.0)
+            self.assertLess(tongue_out[rise_count], tongue_out[rise_count - 1])
+            self.assertAlmostEqual(tongue_out[-1], 0.0)
+        finally:
+            broadcaster.close()
+
+    def test_slew_limit_caps_a_long_inference_gap(self):
+        previous = np.zeros(12, dtype=np.float32)
+        target = np.ones(12, dtype=np.float32)
+        result = smooth_tongue_output(previous, target, 1.0)
+        self.assertTrue(np.all(result > 0.0))
+        self.assertTrue(np.all(result < 0.5))
 
     def test_brief_visibility_miss_keeps_last_pose_then_retracts(self):
         hold = TongueVisibilityHold(hold_seconds=0.22)

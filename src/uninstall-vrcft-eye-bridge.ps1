@@ -2,27 +2,45 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $customLibs = Join-Path $env:APPDATA "VRCFaceTracking\CustomLibs"
 $research = Join-Path $root "research"
-$destination = Join-Path $customLibs "000-Qpro.IndependentGaze.dll"
+$destinations = @(
+    (Join-Path $customLibs "000-Qpro.VirtualDesktop.dll"),
+    (Join-Path $customLibs "000-Qpro.SteamLink.dll"),
+    (Join-Path $customLibs "000-Qpro.IndependentGaze.dll")
+)
 $legacyId = "7f9be083-a4f1-4e30-b28a-8e6ec878d583"
 $officialId = "91a90618-b020-4064-8832-809b2ca2b3bc"
 
-if (Get-Process -Name "VRCFaceTracking" -ErrorAction SilentlyContinue) {
-    throw "Close VRCFaceTracking before uninstalling the Qpro bridge."
+if (Get-Process -Name "VRCFaceTracking", "VRCFaceTracking.ModuleProcess", "ModuleProcess" -ErrorAction SilentlyContinue) {
+    throw "Close VRCFaceTracking and wait for its ModuleProcess helper to exit before uninstalling the Qpro module."
 }
 
-if (Test-Path -LiteralPath $destination) {
+foreach ($destination in $destinations) {
+    if (-not (Test-Path -LiteralPath $destination)) { continue }
+    $item = Get-Item -LiteralPath $destination
+    if ($item.PSIsContainer -or ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "The Qpro module path is not a regular DLL and was left untouched: $destination"
+    }
     try {
         $assemblyName = [System.Reflection.AssemblyName]::GetAssemblyName($destination).Name
     } catch {
-        throw "The file at $destination is not a readable Qpro bridge DLL. It was left untouched."
+        throw "The file at $destination is not a readable Qpro module DLL. It was left untouched."
     }
     if ($assemblyName -ne "Qpro.GazeBridge") {
-        throw "The file at $destination is not the Qpro bridge (assembly: $assemblyName). It was left untouched."
+        throw "The file at $destination is not the Qpro module (assembly: $assemblyName). It was left untouched."
     }
-    Remove-Item -LiteralPath $destination -Force
-    Write-Host "Removed the Qpro VRCFaceTracking bridge: $destination"
+}
+
+$installed = @($destinations | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+if (Get-Process -Name "VRCFaceTracking", "VRCFaceTracking.ModuleProcess", "ModuleProcess" -ErrorAction SilentlyContinue) {
+    throw "VRCFaceTracking or its ModuleProcess helper opened during uninstallation. Close it and retry."
+}
+if ($installed.Count -gt 0) {
+    foreach ($destination in $installed) {
+        Remove-Item -LiteralPath $destination -Force
+        Write-Host "Removed the Qpro VRCFaceTracking module: $destination"
+    }
 } else {
-    Write-Host "No installed Qpro bridge DLL was found. Checking for saved modules to restore."
+    Write-Host "No installed Qpro module DLL was found. Checking for saved modules to restore."
 }
 
 function Restore-SavedModule([string]$BackupPath, [string]$ModuleId) {
@@ -52,7 +70,7 @@ function Restore-SavedModule([string]$BackupPath, [string]$ModuleId) {
 
 if (Test-Path -LiteralPath $research -PathType Container) {
     $officialBackups = @(Get-ChildItem -LiteralPath $research -Directory |
-        Where-Object { $_.Name -match '^vrcft-official-virtual-desktop-backup(?:-\d{8}-\d{6})?$' } |
+        Where-Object { $_.Name -match '^vrcft-official-virtual-desktop-backup(?:-\d{8}-\d{6}|-[0-9a-f]{32})?$' } |
         Sort-Object LastWriteTimeUtc -Descending)
     if ($officialBackups.Count -gt 0) {
         Restore-SavedModule $officialBackups[0].FullName $officialId
@@ -63,5 +81,5 @@ if (Test-Path -LiteralPath $research -PathType Container) {
     Restore-SavedModule (Join-Path $research "vrcft-legacy-registry-module-backup") $legacyId
 }
 
-Write-Host "Qpro bridge uninstall finished. Restart VRCFaceTracking. Personal tongue models and captures were not changed."
-Write-Host "If normal Virtual Desktop face tracking is missing and no saved module was restored, install its official VRCFaceTracking module again."
+Write-Host "Qpro module uninstall finished. Restart VRCFaceTracking. Personal tongue models and captures were not changed."
+Write-Host "If face tracking is missing afterward, install the official VRCFaceTracking module for your chosen Virtual Desktop or Steam Link source. Any separate Steam Link modules were left untouched by Qpro."
