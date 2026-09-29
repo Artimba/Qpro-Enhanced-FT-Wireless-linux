@@ -26,6 +26,7 @@ function Copy-SourceFile([string]$RelativePath, [string]$DestinationPath = $Rela
 $sourceFiles = @(
     "build-and-run.ps1",
     "build-release.ps1",
+    "build-guide.py",
     "build-github-source.ps1",
     "Connect-QproWireless.ps1",
     "Connect-QproWireless.cmd",
