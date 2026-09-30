@@ -171,8 +171,11 @@ internal sealed partial class HubForm
         tracking.Controls.Add(tuning, 0, 8); tracking.SetColumnSpan(tuning, 2);
         tracking.Controls.Add(_individualCheekPuff, 0, 9); tracking.SetColumnSpan(_individualCheekPuff, 2);
         tracking.Controls.Add(new Label { Text = "Cheek puff style", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 10);
-        tracking.Controls.Add(_cheekPuffStyle, 1, 10);
-        tracking.Controls.Add(Info("Strong makes a one-cheek puff full strength; Balanced is gentler. Turn off for the streaming app's original values. Changes take effect immediately."), 0, 11);
+        var cheekPuffActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = Padding.Empty };
+        cheekPuffActions.Controls.Add(_cheekPuffStyle);
+        cheekPuffActions.Controls.Add(_calibrateCheekPuff);
+        tracking.Controls.Add(cheekPuffActions, 1, 10);
+        tracking.Controls.Add(Info("Calibrated gives a smooth response from relaxed to full puff, using the developer baseline until you calibrate. Calibrate each streaming app with its Qpro module running in VRCFaceTracking. 1/0 selects a full-strength cheek; Balanced is gentler. Turn off for native values. Changes take effect immediately."), 0, 11);
         tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 11)!, 2);
         tracking.Controls.Add(_individualCheekSuck, 0, 12); tracking.SetColumnSpan(_individualCheekSuck, 2);
         tracking.Controls.Add(new Label { Text = "Cheek suck style", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 13);

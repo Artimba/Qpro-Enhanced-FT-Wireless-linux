@@ -1,6 +1,6 @@
 namespace QproFaceTracking.Hub;
 
-internal enum HubCheekPuffMode { Off, Balanced, Strong }
+internal enum HubCheekPuffMode { Off, Balanced, Strong, Calibrated }
 
 internal static class HubCheekPuffPreference
 {
@@ -19,6 +19,7 @@ internal static class HubCheekPuffPreference
             {
                 "off" => HubCheekPuffMode.Off,
                 "balanced" => HubCheekPuffMode.Balanced,
+                "calibrated" => HubCheekPuffMode.Calibrated,
                 _ => HubCheekPuffMode.Strong,
             };
         }
@@ -26,27 +27,46 @@ internal static class HubCheekPuffPreference
         catch (UnauthorizedAccessException) { return HubCheekPuffMode.Strong; }
     }
 
-    internal static bool LoadLastStrongStyle()
+    internal static HubCheekPuffMode LoadLastStyle()
     {
         try
         {
             if (File.Exists(StylePath))
-                return !File.ReadAllText(StylePath).Trim().Equals("balanced", StringComparison.OrdinalIgnoreCase);
+                return ParseStyle(File.ReadAllText(StylePath));
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
-        return LoadMode() != HubCheekPuffMode.Balanced;
+        HubCheekPuffMode current = LoadMode();
+        return current == HubCheekPuffMode.Off ? HubCheekPuffMode.Strong : current;
     }
 
-    internal static void Save(bool enabled, bool strong)
+    internal static void Save(bool enabled, HubCheekPuffMode style)
     {
+        string styleText = style switch
+        {
+            HubCheekPuffMode.Calibrated => "calibrated",
+            HubCheekPuffMode.Balanced => "balanced",
+            _ => "strong",
+        };
         Directory.CreateDirectory(ConfigDirectory);
-        File.WriteAllText(StylePath, strong ? "strong" : "balanced");
+        WriteAtomically(StylePath, styleText);
+        WriteAtomically(ModePath, enabled ? styleText : "off");
+    }
+
+    private static HubCheekPuffMode ParseStyle(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "calibrated" => HubCheekPuffMode.Calibrated,
+        "balanced" => HubCheekPuffMode.Balanced,
+        _ => HubCheekPuffMode.Strong,
+    };
+
+    private static void WriteAtomically(string path, string value)
+    {
         string temporaryPath = Path.Combine(ConfigDirectory, $"cheek-puff-mode-{Guid.NewGuid():N}.tmp");
         try
         {
-            File.WriteAllText(temporaryPath, enabled ? (strong ? "strong" : "balanced") : "off");
-            File.Move(temporaryPath, ModePath, overwrite: true);
+            File.WriteAllText(temporaryPath, value);
+            File.Move(temporaryPath, path, overwrite: true);
         }
         finally
         {

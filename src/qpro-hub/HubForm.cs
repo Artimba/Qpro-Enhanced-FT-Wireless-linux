@@ -53,6 +53,7 @@ internal sealed partial class HubForm : Form
     private readonly DarkSlider _smoothing = new() { Minimum = 0, Maximum = 100, Value = 55, Width = 180, Height = 30 };
     private readonly ComboBox _visibilityMode = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 265 };
     private readonly ComboBox _cheekPuffStyle = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 245 };
+    private readonly DarkButton _calibrateCheekPuff = SecondaryButton("Calibrate cheek puff");
     private readonly ComboBox _cheekSuckStyle = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 245 };
     private readonly ComboBox _eyebrowSensitivity = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly Label _usbStatus = StatusLabel();
@@ -174,14 +175,25 @@ internal sealed partial class HubForm : Form
         _visibilityMode.Items.AddRange(["Weighted camera + native", "Camera only", "Native only", "Conservative agreement"]);
         _visibilityMode.SelectedIndex = 0;
         _individualCheekPuff.Checked = HubCheekPuffPreference.LoadMode() != HubCheekPuffMode.Off;
-        _cheekPuffStyle.Items.AddRange(["Balanced", "Strong individual (1/0)"]);
-        _cheekPuffStyle.SelectedIndex = HubCheekPuffPreference.LoadLastStrongStyle() ? 1 : 0;
+        _cheekPuffStyle.Items.AddRange(["Calibrated", "1/0", "Balanced"]);
+        _cheekPuffStyle.SelectedIndex = HubCheekPuffPreference.LoadLastStyle() switch
+        {
+            HubCheekPuffMode.Calibrated => 0,
+            HubCheekPuffMode.Balanced => 2,
+            _ => 1,
+        };
         _cheekPuffStyle.Enabled = _individualCheekPuff.Checked;
         void SaveCheekPuffChoice()
         {
             try
             {
-                HubCheekPuffPreference.Save(_individualCheekPuff.Checked, _cheekPuffStyle.SelectedIndex == 1);
+                HubCheekPuffMode style = _cheekPuffStyle.SelectedIndex switch
+                {
+                    0 => HubCheekPuffMode.Calibrated,
+                    2 => HubCheekPuffMode.Balanced,
+                    _ => HubCheekPuffMode.Strong,
+                };
+                HubCheekPuffPreference.Save(_individualCheekPuff.Checked, style);
                 _cheekPuffStyle.Enabled = _individualCheekPuff.Checked;
                 UpdateToggleStyle(_individualCheekPuff);
                 AppendLog(_individualCheekPuff.Checked
@@ -192,6 +204,19 @@ internal sealed partial class HubForm : Form
         }
         _individualCheekPuff.CheckedChanged += (_, _) => SaveCheekPuffChoice();
         _cheekPuffStyle.SelectedIndexChanged += (_, _) => SaveCheekPuffChoice();
+        _calibrateCheekPuff.Enabled = true;
+        _calibrateCheekPuff.Margin = new Padding(6, 4, 6, 4);
+        _calibrateCheekPuff.Click += (_, _) =>
+        {
+            string source = _environment.SteamLinkSelected
+                ? CheekPuffCalibrationProfile.SteamLinkSource
+                : CheekPuffCalibrationProfile.VirtualDesktopSource;
+            using var dialog = new CheekPuffCalibrationDialog(source, UiFontName);
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            _cheekPuffStyle.SelectedIndex = 0;
+            _individualCheekPuff.Checked = true;
+            AppendLog($"Personal cheek puff calibration saved for {(_environment.SteamLinkSelected ? "Steam Link" : "Virtual Desktop")}. Calibrated mode is selected; the Qpro module updates while tracking is running.");
+        };
         _individualCheekSuck.Checked = HubCheekSuckPreference.LoadMode() != HubCheekSuckMode.Off;
         _cheekSuckStyle.Items.AddRange(["Balanced", "Strong individual (1/0)"]);
         _cheekSuckStyle.SelectedIndex = HubCheekSuckPreference.LoadLastStrongStyle() ? 1 : 0;
