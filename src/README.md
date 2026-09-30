@@ -1,6 +1,6 @@
-# QproFaceTracking V2.0.2 — AMD/NVIDIA Wireless Edition
+# QproFaceTracking V2.1.0 - release candidate source
 
-Face-tracking tools for a **rooted Quest Pro** on Windows. V2.0.2 builds on [n0tmast3r's Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT) and includes wireless ADB support and an optional AMD ROCm path for tongue tracking and training. NVIDIA CUDA has also been live-tested and is functional; a CPU fallback remains available. V2.0.2 restores missing tongue training modules to the release ZIP and improves AMD ROCm setup status and GPU checks.
+Face-tracking tools for a **rooted Meta Quest Pro** on Windows, based on [n0tmast3r's Qpro-Enhanced-FT](https://github.com/n0tmast3r/Qpro-Enhanced-FT). This source prepares the V2.1.0 release candidate: Virtual Desktop or Steam Link, USB or wireless ADB, NVIDIA CUDA, experimental AMD ROCm support, and CPU fallback. **The V2.1.0 candidate has not been published as a GitHub release.** See [V2.1.0 release notes](RELEASE_NOTES_V2.1.0.md) for the proposed release description.
 
 **[Download the latest release](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases/latest)** · [Beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) · [Text setup instructions](RELEASE_INSTRUCTIONS.md) · [Detailed technical notes](RELEASE_README.md) · [Community Discord](https://discord.gg/ghvuJTpRu4)
 
@@ -12,23 +12,24 @@ Start with [**Root Your Meta Quest with Singularity — a beginner guide by Fwoo
 
 Before changing your headset, compare its **exact model and firmware build** with the current [Singularity documentation and releases](https://github.com/Lumince/singularity). The root guide covers several Quest models; **this face-tracking app is for Quest Pro**.
 
-## What the public release does
+## What this candidate includes
 
-- Preserves Virtual Desktop's normal face, brow, jaw, and blink tracking while adding optional independent eye gaze and convergence.
-- Adds stereo camera tongue tracking with a demonstration model that can be personalized through a quick refinement or full capture.
+- Receives face, brow, jaw, and blink values through the selected Virtual Desktop or Steam Link Qpro module, with optional independent eye gaze and convergence.
+- Adds stereo camera tongue tracking with developer v8 as the default, an opt-in Mustachio model, and Quick refinement, Focused, and Full dataset capture modes.
+- Provides individual cheek puff and suck, source-specific cheek calibration and developer baselines, eyebrow sensitivity, and stronger one-sided smirk handling.
 - Carries headset camera and eye data over USB or wireless ADB. Wireless ADB requires Magisk root access for Shell / ADB Shell and a trusted private network.
 - Runs the tongue model on AMD ROCm, NVIDIA CUDA, or CPU when the corresponding runtime is available. The Hub's Activity log reports the backend used.
 
-**Experimental relative pupil dilation** is included in V2.0.2 and has been live-tested in VRChat. It is an avatar animation estimate, not a calibrated pupil measurement.
+**Experimental relative pupil dilation** has been live-tested in VRChat. It is an avatar animation estimate, not a calibrated pupil measurement.
 
-An experimental **Steam Link face-tracking source** is being developed for a separate test build. The published V2.0.2 ZIP still uses Virtual Desktop. The test build's [text setup instructions](RELEASE_INSTRUCTIONS.md#steam-link-source-in-the-experimental-test-build) explain Steam Link OSC settings and its separate Qpro module install button. Steam Link face, blink, and mouth tracking worked after a headset restart, Qpro's camera tongue override moved in VRChat, and native Steam TongueOut worked with VRCFaceTracking running on Steam Link.
+**Steam Link** is selectable under **Streaming app** in this candidate. Its Qpro module uses OSC port **9015** with eye and face sharing enabled. Steam Link face, blink, and mouth tracking, native TongueOut, and Qpro's camera tongue override have been checked live on a Quest Pro. Follow the [Steam Link settings](RELEASE_INSTRUCTIONS.md#steam-link-settings) before installing its module.
 
 ## Requirements
 
 - Windows 10 or 11, x64.
 - A rooted Quest Pro with eye and face tracking enabled, Developer Mode on, and an authorized ADB connection.
 - Magisk Superuser access granted to Shell / ADB Shell.
-- Virtual Desktop (or Steam Link in the experimental test build), SteamVR, and the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) for the tracking workflow. Let Steam finish updating it before installing the Qpro module.
+- Virtual Desktop or Steam Link, SteamVR, and the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) for the tracking workflow. Let Steam finish updating it before installing the Qpro module.
 - Internet access and free disk space for the PC runtime. The release bundles ADB, so a separate ADB installation is not needed for the Hub.
 
 The wireless transport and AMD inference were tested on a Quest Pro with build `51503870024400340` and a Radeon RX 7900 XTX. NVIDIA CUDA hardware has also been live-tested and is functional. Eye convergence can vary by firmware; a successful root or eye-camera connection does not establish convergence support on every build. If the Hub's independent-gaze patch fails, [Singularity's Quest Pro Independent Eye Gaze Magisk module](https://github.com/Lumince/singularity) is an alternative reported working on Horizon OS v2.7. Install Magisk OverlayFS first, then the gaze module through **Singularity > Apps/Modules > Magisk repo**; use only one gaze method at a time.
@@ -37,10 +38,10 @@ The wireless transport and AMD inference were tested on a Quest Pro with build `
 
 1. Extract the complete release ZIP. Open `QproFaceTracking.exe` from the extracted folder, not from inside the ZIP.
 2. In **First-time setup**, choose **USB cable** or **Wireless ADB (Wi-Fi)**. If you choose wireless, enter the Quest's IP and use the built-in connect or pairing controls. The Hub saves your choice and uses it for tracking.
-3. Use **Install runtime**. It prepares Qpro's own Python 3.12 and a separate tracking environment, whether Python is already installed on the PC or not. On a supported AMD GPU, use **Install AMD ROCm** in the same page afterward; the Hub then selects that runtime automatically for tongue inference and training. NVIDIA and CPU users skip ROCm.
-4. Close VRCFaceTracking and wait for its module process to exit. In the experimental test Hub, use **Install Virtual Desktop module** or **Install Steam Link module** for your selected source; installing one removes the other. Reopen VRCFaceTracking afterward. The published V2.0.2 ZIP keeps its original Virtual Desktop install button.
-5. For independent gaze, connect the rooted headset and use **Prepare gaze**. The Hub makes a temporary patch from your headset's own eye model.
-6. Start Virtual Desktop, SteamVR, and VRCFaceTracking. Confirm ordinary face tracking works, select the features you want in the Hub, then press **Start tracking**.
+3. Use **Install runtime**. It prepares Qpro's private Python 3.12 and tracking environment, whether another Python is installed or not. On an eligible discrete AMD GPU with Windows 11, use **Install ROCm 10.0** afterward. Its experimental Qpro environment becomes active only after GPU inference and training checks pass. NVIDIA and CPU users skip ROCm.
+4. Close VRCFaceTracking and wait for its module process to exit. Choose your **Streaming app** and press its matching **Install Virtual Desktop module** or **Install Steam Link module** button; installing one removes the other Qpro source module. Reopen VRCFaceTracking afterward.
+5. Independent Eye Gaze starts off. If you use the Hub's temporary gaze route, connect the rooted headset and press **Prepare gaze**. It reads your headset's model and engine details without needing a manually supplied engine file. Skip this if Singularity's gaze module is active.
+6. Start the selected Virtual Desktop or Steam Link app, SteamVR, and VRCFaceTracking. Confirm ordinary face tracking works, select the features you want in the Hub, then press **Start tracking**.
 7. When finished, press **Stop tracking** and wait for the Activity log to confirm cleanup.
 
 Applying or restoring the Hub's independent gaze model briefly restarts Meta trackingservice. The headset can appear frozen and momentarily lose positional tracking while it returns; this is expected, not a headset crash. Wait for the Hub's Activity log to confirm tracking has resumed.
@@ -51,9 +52,13 @@ If Windows will not let you delete an older extracted Qpro folder, close its Hub
 
 ## Models, data, and source
 
-The bundled tongue model and eye profile are **developer demonstrations**, so alignment and tongue detection may differ for another wearer. Quick refinement is a practical starting point. Personal captures, trained models, saved headset addresses, and generated eye patches are not included in the release ZIP. Camera captures are sensitive: share them only with the wearer's permission. Maintainers can use the source-only [developer tongue training guide](DEVELOPER_TONGUE_TRAINING.md) to evaluate a candidate against separate captures before considering it for a future release.
+The developer **v8** tongue model remains the default. **Mustachio** is a separate, opt-in, highly experimental extension of v8 trained with one bearded and moustached wearer. Independent clean-shaven validation and broader wearer testing are pending; it may perform worse for some people. Its contrast processing cannot recover tongue detail completely hidden by hair.
 
-**If you used a Qpro version before V2.0, record and train a new tongue model.** A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2. Keep older exports as backups; importing a pre-V2.0 model does not replace a new capture and training run. The [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) walks through the steps.
+Quick refinement and Focused training extend the model selected under **Live tracking > Tongue model**. Copies made from Mustachio retain their experimental status through training, renaming, export, and import. Full dataset makes a new personal model instead.
+
+Personal camera captures, training arrays, personal cheek profiles, saved headset addresses, and generated eye patches are not included in the release ZIP. Approved model weights and developer cheek baselines are included; raw recordings stay private. Share camera captures only with the wearer's permission. Maintainers can use the source-only [developer tongue training guide](DEVELOPER_TONGUE_TRAINING.md) to evaluate further candidates against independent captures before promoting them.
+
+**If you used a Qpro version before V2.0, record and train a new tongue model.** Working V2.0 through V2.0.2 models can be exported and imported into V2.1.0 through **Model manager**, without retraining. Keep older exports as backups; importing a pre-V2.0 model does not replace a new capture and training run. The [beginner PDF guide](Quest_Pro_Enhanced_Face_Tracking_Guide.pdf) walks through the steps.
 
 This repository holds the editable source. Its release build also needs larger assets distributed with the ZIP. See [contributing](CONTRIBUTING.md), [third-party notices](THIRD_PARTY_NOTICES.md), and the [license](LICENSE) before redistributing changes. The [upstream README](UPSTREAM-README.md) retains the original project's notes, including older USB-oriented instructions.
 
@@ -63,6 +68,7 @@ The Windows Hub is in [`qpro-hub/`](qpro-hub/), the VRCFaceTracking module in [`
 
 - [n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT) created the original Qpro-Enhanced-FT project.
 - [Lumince and Singularity contributors](https://github.com/Lumince/singularity) created the headset root project used by this workflow.
+- [danwillm](https://github.com/danwillm/VRCFT-SteamLink) and the [LinkFT contributors](https://github.com/ykeara/LinkFT) documented the Steam Link tracking source used by Qpro's module.
 - **Fwooffy** created the original [beginner Quest root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md). **[glorpette](https://github.com/glorpette/quest-guides)** made and hosts its GitHub version.
 
-This project is unaffiliated with Meta, Virtual Desktop, VRCFaceTracking, or VRChat.
+For help, share relevant **Activity** lines in the [community Discord](https://discord.gg/ghvuJTpRu4). The server is not owned by Fwooffy. This project is unaffiliated with Meta, Virtual Desktop, VRCFaceTracking, or VRChat.

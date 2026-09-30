@@ -1,10 +1,14 @@
-# QproFaceTracking V2.0.2
+# QproFaceTracking V2.1.0
 
-A Windows Hub for enhanced face tracking on a **rooted Meta Quest Pro**, based on [Qpro-Enhanced-FT by n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT). V2.0.2 supports USB and wireless ADB, tongue tracking with AMD ROCm or NVIDIA CUDA, and optional independent eye gaze and relative pupil animation. This update restores missing tongue training modules to the release ZIP and improves AMD ROCm setup status and GPU checks.
+A Windows Hub for enhanced face tracking on a **rooted Meta Quest Pro**, based on [Qpro-Enhanced-FT by n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT). It supports Virtual Desktop or Steam Link, USB or wireless ADB, tongue tracking with NVIDIA CUDA, experimental AMD ROCm support, and CPU fallback. Optional features include independent eye gaze, relative pupil animation, individual cheek puff and suck, and eyebrow sensitivity.
+
+**V2.1.0 is being prepared as a release candidate.** See the [V2.1.0 release notes](src/RELEASE_NOTES_V2.1.0.md) for the changes and experimental features. The Releases page remains the place to download published builds.
 
 **Download the runnable ZIP from [Releases](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases/latest).** Extract it before opening `QproFaceTracking.exe`. GitHub's automatic source ZIP does not include the Hub executable or packaged models and tools.
 
-The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/)** is required. If you used a Qpro version before V2.0, record and train a new tongue model. A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2.
+The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/)** is required. If you used a Qpro version before V2.0, record and train a new tongue model. Working V2.0 through V2.0.2 models can be exported and imported into V2.1.0 through **Model manager**.
+
+The developer **v8** tongue model remains the default. **Mustachio** is a separate, opt-in, highly experimental extension of v8 trained with one bearded and moustached wearer. It has no independent clean-shaven validation yet. Quick refinement and Focused training extend the model selected under **Live tracking > Tongue model**, including Mustachio; copies made from an experimental model retain that status.
 
 ## Guides
 
@@ -26,6 +30,7 @@ For help, share relevant Hub **Activity** lines in the [community Discord](https
 ## Credits
 
 - [n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT) created the original Qpro-Enhanced-FT project that this edition is based on.
-- Fwooffy made this V2.0 edition and its beginner face tracking guide.
+- Fwooffy maintains this edition and wrote its beginner face tracking guide.
 - [Lumince and the Singularity contributors](https://github.com/Lumince/singularity) created the headset root project used by this workflow.
+- [danwillm](https://github.com/danwillm/VRCFT-SteamLink) and the [LinkFT contributors](https://github.com/ykeara/LinkFT) documented the Steam Link tracking source used by Qpro's module.
 - Fwooffy wrote the original [beginner Quest root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md), and [glorpette](https://github.com/glorpette/quest-guides) made and hosts its GitHub version.

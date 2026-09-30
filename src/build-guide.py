@@ -165,10 +165,11 @@ def story_from_guide(markdown: str):
     story = [
         Spacer(1, 5),
         Paragraph("Quest Pro enhanced face tracking", TITLE),
-        Paragraph("USB or wireless ADB  |  Updated 30 September 2026", SUBTITLE),
-        callout("**A rooted Meta Quest Pro is required.** If you used a version before V2.0, "
-                "record and train a new tongue model. A working V2.0 model can be exported and imported into newer V2 builds. "
-                "The bundled developer model is a starting point.", ORANGE),
+        Paragraph("V2.1.0 release candidate  |  USB or wireless ADB  |  30 September 2026", SUBTITLE),
+        callout("**A rooted Meta Quest Pro and the latest VRCFaceTracking from Steam are required.** "
+                "If you used a version before V2.0, record and train a new tongue model. "
+                "Working V2.0 through V2.0.2 models can be exported and imported into V2.1.0. "
+                "Developer v8 remains the default. Mustachio is optional and highly experimental.", ORANGE),
         Spacer(1, 10),
         Paragraph('Based on <link href="https://github.com/n0tmast3r/Qpro-Enhanced-FT/releases" color="#177F83"><u>Qpro-Enhanced-FT by n0tmast3r</u></link>. '
                   'Fwooffy maintains the <link href="https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless" color="#177F83"><u>AMD/NVIDIA wireless edition</u></link>. '
@@ -249,7 +250,7 @@ def story_from_guide(markdown: str):
 def main():
     doc = SimpleDocTemplate(
         str(OUTPUT), pagesize=A4, rightMargin=50, leftMargin=50,
-        topMargin=65, bottomMargin=50, title="Quest Pro Enhanced Face Tracking - Beginner Guide",
+        topMargin=65, bottomMargin=50, title="Quest Pro Enhanced Face Tracking V2.1.0 - Beginner Guide",
         author="Fwooffy", subject="Rooted Quest Pro face tracking setup",
         pageCompression=1,
     )

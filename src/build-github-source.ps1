@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.0.2"
+    [string]$Version = "2.1.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -113,6 +113,7 @@ $sourceFiles = @(
     "README.md",
     "qpro-hub\README.md",
     "RELEASE_README.md",
+    "RELEASE_NOTES_V2.1.0.md",
     "RELEASE_INSTRUCTIONS.md",
     "RELEASE_HELPERS_README.md",
     "DEVELOPER_TONGUE_TRAINING.md",

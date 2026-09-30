@@ -1,10 +1,10 @@
-# QproFaceTracking V2.0.2: text setup guide
+# QproFaceTracking V2.1.0: text setup guide
 
 > **Before you start: you need a rooted Meta Quest Pro and the latest VRCFaceTracking from Steam.** This program will not work on an unrooted headset or a different Quest model. If you still need to root your Quest Pro, use [Fwooffy and glorpette's beginner root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md). Check that your headset's exact software version is supported by [Singularity](https://github.com/Lumince/singularity) before following a root guide. [Install or update VRCFaceTracking through Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) before using Qpro's module.
 >
-> **If you used a QproFaceTracking version before V2.0, record and train your tongue model again.** Do not import a pre-V2.0 model and assume it will work correctly. A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2. The included developer model is only a starting point.
+> **If you used a QproFaceTracking version before V2.0, record and train your tongue model again.** Do not import a pre-V2.0 model and assume it will work correctly. Working V2.0 through V2.0.2 models can be exported and imported into V2.1.0. The developer v8 model remains the default starting point.
 
-> **Steam Link is experimental in the new test build.** The public V2.0.2 release ZIP uses Virtual Desktop. If your Hub does not show a **Streaming app** choice, follow the Virtual Desktop steps below.
+> **This guide covers the V2.1.0 release candidate.** Virtual Desktop and Steam Link are available under **Streaming app**. Mustachio is an optional, highly experimental tongue model; start with developer v8 or your existing working model.
 
 Start with the headset's eye tracking, then set up the PC software. The **Hub** is the `QproFaceTracking.exe` program. **ADB** is the connection it uses to talk to your Quest. The **Qpro module** sends tracking results to VRCFaceTracking.
 
@@ -19,7 +19,7 @@ Start with the headset's eye tracking, then set up the PC software. The **Hub** 
 
 ## 2. Download and open the Hub
 
-1. Download the QproFaceTracking **ZIP file** from [this project's Releases page](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases). Choose the named QproFaceTracking ZIP, **not** GitHub's “Source code” ZIP.
+1. Download **QproFaceTracking V2.1.0.zip** when it is published on [this project's Releases page](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases), or use the supplied release candidate ZIP. Choose the named QproFaceTracking ZIP, **not** GitHub's “Source code” ZIP.
 2. In Windows File Explorer, right-click the ZIP and choose **Extract All**. Open the extracted folder. Keep `QproFaceTracking.exe`, `Helpers`, and `QproRuntime` together.
 3. Double-click `QproFaceTracking.exe`. It opens on **First-time setup** the first time. You can return to that page from the menu on the left.
 
@@ -29,9 +29,9 @@ You need an internet connection and several gigabytes of free space for setup. T
 
 If Magisk asks whether **Shell / ADB Shell** may have root access, allow it. Keep the Quest awake while setting up the Hub.
 
-For the published V2.0.2 ZIP, install [Virtual Desktop and its PC Streamer](https://www.vrdesktop.net/), [SteamVR](https://store.steampowered.com/app/250820/SteamVR/), and the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/). The experimental test build can use Steam Link in place of Virtual Desktop. **The current Steam VRCFaceTracking is required for either source.** Let Steam finish updating it before installing Qpro's module. Try ordinary face and blink tracking in VRCFaceTracking first. If that does not work, fix it before turning on Qpro's extra features.
+Choose either [Virtual Desktop and its PC Streamer](https://www.vrdesktop.net/) or Steam Link for your Quest-to-PC VR connection. Install [SteamVR](https://store.steampowered.com/app/250820/SteamVR/) and the [latest VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) on the PC. **The current Steam VRCFaceTracking is required for either source.** Let Steam finish updating it before installing Qpro's module. After installing the matching Qpro module in section 5, try ordinary face and blink tracking before turning on Qpro's extra features.
 
-### Steam Link source in the experimental test build
+### Steam Link settings
 
 You can choose **Steam Link** under **Streaming app** instead of Virtual Desktop. SteamVR and the latest VRCFaceTracking are still required. In Steam Link on the headset, open **Advanced Settings**, turn on **OSC**, **Share eye tracking data**, and **Share face tracking data**, then set **OSC Output Port** to **9015**. These are Steam Link's tracking settings; the Hub's **Connection type** still chooses USB or wireless ADB for Qpro's headset camera stream.
 
@@ -71,7 +71,7 @@ If pairing says `protocol fault`, open a new pairing message on the headset and 
 On **First-time setup**, work down the three numbered cards:
 
 1. On the **PC runtime** card, press **Install runtime** and wait for Activity to say it has finished. This prepares Qpro's private Python and downloads the PC parts needed for tracking. The Hub stays at your current place on the page while it runs. You do not need to install, repair, or remove another Python installation.
-2. **Close VRCFaceTracking** and wait for its module process to exit. In the experimental test Hub, choose your **Streaming app**, press **Install Virtual Desktop module** or **Install Steam Link module** for that source, wait for completion, then reopen VRCFaceTracking. Installing one Qpro module uninstalls the other. For the published V2.0.2 ZIP, leave the source on **Virtual Desktop** and use its existing install button.
+2. **Close VRCFaceTracking** and wait for its module process to exit. Choose your **Streaming app**, press the matching **Install Virtual Desktop module** or **Install Steam Link module** button, wait for completion, then reopen VRCFaceTracking. Only the selected app's install button is available. Installing one Qpro module uninstalls the other Qpro source module.
 3. If you chose the Hub's independent gaze method **instead of the Magisk module**, press **Prepare gaze** while the rooted Quest is connected. The Hub reads the stock eye model and tracking-engine details from that headset, then prepares a temporary model on the PC. You do not need to supply an engine file. Skip this button if the Magisk gaze module is enabled, or if you only want tongue or pupil tracking. Prepare gaze again after a headset firmware update.
 
 The Hub checks the prepared model and headset build before restarting tracking. If the build is unsupported or changed, Activity explains why and the Hub leaves headset tracking alone. Use the Singularity module instructions in section 1, or keep ordinary eye tracking from your selected source. Note your Quest's **exact firmware build** when asking for help. On a supported build, applying or restoring the Hub's temporary eye model restarts Meta trackingservice. The headset may briefly look frozen and lose positional tracking; this is an expected restart, not a headset crash. Wait for Activity to confirm that tracking has returned.
@@ -87,7 +87,7 @@ To remove Qpro's VRCFaceTracking add-on later, close VRCFaceTracking, wait for i
 | RX 9000 | 9070 XT, 9070, 9070 GRE; 9060 XT, 9060 |
 | Radeon PRO | AI PRO R9700, PRO W7900, PRO W7900 Dual Slot |
 
-Qpro installs [AMD TheRock ROCm 10.0 packages](https://github.com/ROCm/TheRock/blob/main/RELEASES.md) for the detected card's [GPU target](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html). ROCm 10.0 is AMD's latest stable series in this test build, while its use in Qpro remains **experimental**. AMD's stable Windows installation guide does not explicitly list the RX 6750/6700 (gfx1031) or RX 6600 (gfx1032) device packages. Setup attempts those targets and will report a failure if a package or GPU check is unavailable. Confirm the Hub prompt and allow time for a large download. [AMD's ROCm 10.0 matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) validates Windows 11 25H2 with Adrenalin 26.8.1; other Windows 11 builds or drivers may fail the GPU checks. Qpro enables the new environment only after GPU training and model inference tests pass. Integrated graphics and unlisted Radeon models are not eligible. If setup fails, read the full **Activity** error.
+Qpro installs [AMD TheRock ROCm 10.0 packages](https://github.com/ROCm/TheRock/blob/main/RELEASES.md) for the detected card's [GPU target](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html). These are AMD's stable packages, while their use in Qpro remains **experimental**. AMD's stable Windows installation guide does not explicitly list the RX 6750/6700 (gfx1031) or RX 6600 (gfx1032) device packages. Setup attempts those targets and will report a failure if a package or GPU check is unavailable. Confirm the Hub prompt and allow time for a large download. [AMD's ROCm 10.0 matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) validates Windows 11 25H2 with Adrenalin 26.8.1; other Windows 11 builds or drivers may fail the GPU checks. Qpro enables the new environment only after GPU training and model inference tests pass. Integrated graphics and unlisted Radeon models are not eligible. If setup fails, read the full **Activity** error.
 
 The new packages use `.venv-rocm-experimental`. This folder name preserves compatibility with earlier test builds; it does not mean AMD's packages are a preview release. If this extracted Qpro copy already has a **verified** `.venv-rocm` installation on a card in [AMD's Windows ROCm 7.2.1 list](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityrad/windows/windows_compatibility.html), Qpro keeps it as a fallback when ROCm 10.0 is not ready. The Hub shows whether 10.0 is verified or the older fallback is available. An RX 7900 XTX was live-tested with the older ROCm 7.2.1 path; the ROCm 10.0 Qpro path still needs live tests on the listed cards.
 
@@ -95,20 +95,30 @@ The new packages use `.venv-rocm-experimental`. This folder name preserves compa
 
 ## 6. Record and train your tongue model
 
-**Train if you have no personal model or used a version before V2.0. You can import a working V2.0 or V2.0.1 model into V2.0.2.** The bundled model was trained for someone else's face.
+**Train if you have no personal model or used a version before V2.0. You can import a working V2.0 through V2.0.2 model into V2.1.0.** The bundled models were trained on other wearers.
 
-1. Open **Personalize** in the Hub.
-2. Choose **Quick refinement** for the shorter guided session, or **Full dataset** for more thorough coverage. Press **1. Record refinement** or **1. Record full dataset**.
-3. Follow each on-screen pose card. Include the side and **diagonal** tongue positions. Missing a pose can make tracking briefly disappear there.
-4. When recording finishes, choose the new recording in the list. Press **2. Train personalized copy** or **2. Train new personal model**. Wait for Activity to say training finished.
+1. For Quick refinement or Focused training, choose the model you want to extend under **Live tracking > Tongue model** before training. Developer v8 is the default. Full dataset makes a new personal model instead.
+2. Open **Personalize** and choose a capture mode below.
+3. Follow each pose card, hold the pose steady, and press **SPACE** once per still. Save at least the on-screen minimum for every card before pressing **ENTER** to continue. Include the side and **diagonal** positions; missing a pose can leave a tracking gap there.
+4. When recording finishes, choose it in the training list and press that mode's training button. Wait for Activity to say training finished. Select the resulting model when you restart tracking in section 7.
 
-If you have facial hair or wear a bandage near the mouth, keep it as you normally wear it during tracking. Record the hidden tongue and every visible pose, including several slightly different jaw and headset positions. The capture screen waits for fresh VRCFaceTracking factory packets; it does not require you to make the native face values move before recording. Training varies local image shading, but a personal recording is still needed to check whether your tongue remains visible to the cameras.
+- **Quick refinement - 10–20 min:** press **1. Record refinement**, then **2. Train personalized copy**. This is the shortest way to adapt the selected model to your face.
+- **Focused diagonals + facial hair - 15–30 min:** press **1. Record focused dataset**, then **2. Train focused copy**. Its 22 cards add diagonal positions and matched hidden/visible poses for facial-hair shadows.
+- **Full dataset - 60–120 min:** press **1. Record full dataset**, then **2. Train new personal model**. Its 58 cards cover more mouth poses, directions, and tongue extension strengths. Take breaks as needed.
+
+If you have facial hair or wear a bandage near the mouth, keep it as you normally wear it during tracking. For every visible pose, check that the tongue can actually be seen in the two camera panels. Hold one pose per still; vary your jaw or headset position slightly between stills. Record hidden poses too, so beard shadows and smiles are not mistaken for tongue movement. Hair that completely covers the tongue cannot be removed by training or contrast processing. The capture screen waits for fresh VRCFaceTracking factory packets; it does not require the native face values to move before recording.
+
+### Trying Mustachio
+
+**Mustachio is highly experimental and optional.** It extends developer v8 with a focused capture from one bearded and moustached wearer. Independent clean-shaven testing and broader facial-hair testing are still pending, so it may perform worse for some people. Developer v8 remains available and is the default.
+
+To try it, choose **Mustachio** under **Live tracking > Tongue model**, then restart tracking. Its contrast processing is selected automatically by the model; it does not invent hidden tongue pixels or remove hair. Quick refinement and Focused training can extend this selected model. Those copies retain the **highly experimental** label, including after renaming, export, and import. Choosing Full dataset starts a new personal model.
 
 After training, **Activity** lists the weakest held-out pose cards and diagonal corners. `missed` counts visible-tongue frames that the selected visibility gate marked hidden; `fnr` is that count divided by visible frames. These are checks on held-out frames from the same recording, so try the model live as well.
 
-The **Model manager** can export a model as a backup. Import working V2.0 or V2.0.1 exports into V2.0.2; for pre-V2.0 exports, make a new capture and train again. Camera recordings are personal data, so share them only if you want to.
+The **Model manager** can export a model as a backup. Import working V2.0 through V2.0.2 exports into V2.1.0; for pre-V2.0 exports, make a new capture and train again. Camera recordings are personal data, so share them only if you want to.
 
-To remove a recording you no longer need, stay on **Personalize**. Under the matching **Quick refinement** or **Full dataset** card, choose it from **Recorded datasets (including trained)** and press **Delete selected dataset…**. Read the confirmation before choosing **Yes**: this permanently removes the recording, its labels and session details, and its prepared training cache from this extracted copy. A tongue model already trained from that recording remains available in **Model manager**. The training dropdown above only lists datasets still waiting to be trained.
+To remove a recording you no longer need, stay on **Personalize**. Under its matching capture card, choose it from **Recorded datasets (including trained)** and press **Delete selected dataset…**. Read the confirmation before choosing **Yes**: this permanently removes the recording, its labels and session details, and its prepared training cache from this extracted copy. A tongue model already trained from that recording remains available in **Model manager**. The training dropdown above only lists datasets still waiting to be trained.
 
 ## 7. Start tracking
 
@@ -145,6 +155,10 @@ Virtual Desktop and Steam Link have separate personal profiles. Calibrate each s
 
 **Adjust eyebrow movement** starts off, so brows use the selected source's original values. Turn it on and adjust **Eyebrow sensitivity** to amplify or soften the existing left and right inner raise, outer raise, and lower/pinch expressions. This cannot add movements the headset does not detect. The avatar needs matching brow parameters and blendshapes to show that detail. If the expressions move in VRCFaceTracking's preview but the avatar shows only a single brow motion, check the avatar's face tracking setup.
 
+Smirk handling is built into both Qpro modules. A clear one-sided smile emphasizes its leading corner and suppresses the weaker side; an even smile still moves both sides. There is no separate smirk toggle in the Hub.
+
+For tongue motion, adjust **Motion smoothing** to soften extension and retraction. The visibility hold reduces quick dropouts after a visible pose, but it cannot make a completely obscured tongue visible. Use **Focused diagonals + facial hair** to record positions that still need better coverage.
+
 If Independent Eye Gaze fails to start or stops unexpectedly, the Hub turns it off automatically and remembers that choice. Tongue and pupil tracking continue if selected. Check **Activity** for the recovery result before trying gaze again; select **Independent Eye Gaze** manually to retry.
 
 ## Common problems
@@ -172,4 +186,4 @@ If Windows will not let you delete an older extracted Qpro folder, close its Hub
 
 If you need help, copy the relevant lines from **Activity** and tell us your Quest firmware version, whether you used USB or wireless, and which release ZIP you downloaded. You can ask in the [community Discord](https://discord.gg/ghvuJTpRu4). The server is not owned by Fwooffy.
 
-The experimental Steam Link source follows the OSC mapping documented by [danwillm](https://github.com/danwillm/VRCFT-SteamLink) and the [LinkFT project](https://github.com/ykeara/LinkFT). Qpro does not require either third-party module alongside its own module.
+The Steam Link source follows the OSC mapping documented by [danwillm](https://github.com/danwillm/VRCFT-SteamLink) and the [LinkFT project](https://github.com/ykeara/LinkFT). Qpro does not require either third-party module alongside its own module.
