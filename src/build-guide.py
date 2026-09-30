@@ -165,7 +165,7 @@ def story_from_guide(markdown: str):
     story = [
         Spacer(1, 5),
         Paragraph("Quest Pro enhanced face tracking", TITLE),
-        Paragraph("USB or wireless ADB  |  Updated 29 September 2026", SUBTITLE),
+        Paragraph("USB or wireless ADB  |  Updated 30 September 2026", SUBTITLE),
         callout("**A rooted Meta Quest Pro is required.** If you used a version before V2.0, "
                 "record and train a new tongue model. A working V2.0 model can be exported and imported into newer V2 builds. "
                 "The bundled developer model is a starting point.", ORANGE),

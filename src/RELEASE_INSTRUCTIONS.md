@@ -4,7 +4,7 @@
 >
 > **If you used a QproFaceTracking version before V2.0, record and train your tongue model again.** Do not import a pre-V2.0 model and assume it will work correctly. A working V2.0 or V2.0.1 model can be exported and imported into V2.0.2. The included developer model is only a starting point.
 
-> **Steam Link is experimental in the new test build.** The public V2.0.2 release ZIP uses Virtual Desktop. If your Hub does not show a **Face-tracking source** choice, follow the Virtual Desktop steps below.
+> **Steam Link is experimental in the new test build.** The public V2.0.2 release ZIP uses Virtual Desktop. If your Hub does not show a **Streaming app** choice, follow the Virtual Desktop steps below.
 
 Start with the headset's eye tracking, then set up the PC software. The **Hub** is the `QproFaceTracking.exe` program. **ADB** is the connection it uses to talk to your Quest. The **Qpro module** sends tracking results to VRCFaceTracking.
 
@@ -33,7 +33,7 @@ For the published V2.0.2 ZIP, install [Virtual Desktop and its PC Streamer](http
 
 ### Steam Link source in the experimental test build
 
-You can choose **Steam Link** under **Face-tracking source** instead of Virtual Desktop. SteamVR and the latest VRCFaceTracking are still required. In Steam Link on the headset, open **Advanced Settings**, turn on **OSC**, **Share eye tracking data**, and **Share face tracking data**, then set **OSC Output Port** to **9015**. These are Steam Link's tracking settings; the Hub's **Connection type** still chooses USB or wireless ADB for Qpro's headset camera stream.
+You can choose **Steam Link** under **Streaming app** instead of Virtual Desktop. SteamVR and the latest VRCFaceTracking are still required. In Steam Link on the headset, open **Advanced Settings**, turn on **OSC**, **Share eye tracking data**, and **Share face tracking data**, then set **OSC Output Port** to **9015**. These are Steam Link's tracking settings; the Hub's **Connection type** still chooses USB or wireless ADB for Qpro's headset camera stream.
 
 Close VRCFaceTracking and wait for its module process to exit before switching sources. In **First-time setup**, choose **Steam Link** and press **Install Steam Link module**; reopen VRCFaceTracking afterward. Installing this Qpro module removes the Qpro Virtual Desktop module. A separate LinkFT or Steam Link VRCFaceTracking module still needs to be removed through VRCFaceTracking because it competes for the same OSC port and eye/face slots. Steam Link face, blink, and mouth tracking worked after a headset restart, Qpro's camera tongue override moved in VRChat, and native Steam TongueOut worked with VRCFaceTracking running on Steam Link. To return to Virtual Desktop, choose it in the Hub, press **Install Virtual Desktop module**, then reopen VRCFaceTracking.
 
@@ -71,7 +71,7 @@ If pairing says `protocol fault`, open a new pairing message on the headset and 
 On **First-time setup**, work down the three numbered cards:
 
 1. On the **PC runtime** card, press **Install runtime** and wait for Activity to say it has finished. This prepares Qpro's private Python and downloads the PC parts needed for tracking. The Hub stays at your current place on the page while it runs. You do not need to install, repair, or remove another Python installation.
-2. **Close VRCFaceTracking** and wait for its module process to exit. In the experimental test Hub, choose **Face-tracking source**, press **Install Virtual Desktop module** or **Install Steam Link module** for that source, wait for completion, then reopen VRCFaceTracking. Installing one Qpro module uninstalls the other. For the published V2.0.2 ZIP, leave the source on **Virtual Desktop** and use its existing install button.
+2. **Close VRCFaceTracking** and wait for its module process to exit. In the experimental test Hub, choose your **Streaming app**, press **Install Virtual Desktop module** or **Install Steam Link module** for that source, wait for completion, then reopen VRCFaceTracking. Installing one Qpro module uninstalls the other. For the published V2.0.2 ZIP, leave the source on **Virtual Desktop** and use its existing install button.
 3. If you chose the Hub's independent gaze method **instead of the Magisk module**, press **Prepare gaze** while the rooted Quest is connected. The Hub reads the stock eye model and tracking-engine details from that headset, then prepares a temporary model on the PC. You do not need to supply an engine file. Skip this button if the Magisk gaze module is enabled, or if you only want tongue or pupil tracking. Prepare gaze again after a headset firmware update.
 
 The Hub checks the prepared model and headset build before restarting tracking. If the build is unsupported or changed, Activity explains why and the Hub leaves headset tracking alone. Use the Singularity module instructions in section 1, or keep ordinary eye tracking from your selected source. Note your Quest's **exact firmware build** when asking for help. On a supported build, applying or restoring the Hub's temporary eye model restarts Meta trackingservice. The headset may briefly look frozen and lose positional tracking; this is an expected restart, not a headset crash. Wait for Activity to confirm that tracking has returned.
@@ -119,7 +119,27 @@ To remove a recording you no longer need, stay on **Personalize**. Under the mat
 
 **Preview tracking cameras** lets you hide the camera windows without turning tracking off. Change it before starting the next session. **Pupil response** makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
 
-**Individual cheek puff** is on **Live tracking** and starts on by default. **Strong individual (1/0)** makes a clear one-cheek puff full strength on that side and zero on the other, while a two-cheek puff still moves both. Choose **Balanced** for gentler separation, or turn **Individual cheek puff** off to use the original cheek values from Virtual Desktop or Steam Link. You can change this while tracking is running. If the VRCFaceTracking preview separates the cheeks but the avatar does not, check the avatar's parameters and blendshapes.
+### Choose your cheek puff response
+
+**Individual cheek puff** is on **Live tracking** and starts on with **1/0** selected. Choose a **Cheek puff style**:
+
+- **Calibrated:** a smooth strength from relaxed to full puff, including values between 0 and 1. It uses your personal calibration for the selected streaming app, or the bundled developer cheek baseline until you make one. Separate developer baselines were measured on one Quest Pro through Virtual Desktop and Steam Link. They are a starting point; calibrate for your own face if the response is too weak or too strong.
+- **1/0:** a clear one-cheek puff becomes full strength on that side and zero on the other. Puffing both cheeks still moves both.
+- **Balanced:** gentler separation that keeps changes in cheek strength without using a calibration profile.
+
+Turn **Individual cheek puff** off to use the original cheek values from Virtual Desktop or Steam Link. The toggle and style take effect while tracking is running. If the VRCFaceTracking preview separates the cheeks but the avatar does not, check the avatar's parameters and blendshapes.
+
+### Calibrate cheek puff for your face
+
+1. Keep the headset on and your chosen streaming app connected. Its matching Qpro module must be installed and tracking in VRCFaceTracking. **Qpro camera tracking does not need to be running.**
+2. On **Live tracking**, press **Calibrate cheek puff**. Confirm that the window says **Live cheek feed is ready**.
+3. Relax both cheeks, press **Capture relaxed cheeks**, and hold still for three seconds.
+4. Puff only your own left cheek, keeping the right relaxed. Press **Capture left cheek** and hold for three seconds. Relax briefly afterward.
+5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds.
+
+The window saves your profile after all three poses pass, then selects **Calibrated** and turns **Individual cheek puff** on. Keep your jaw comfortable and avoid smiling during the holds. If a pose is too weak, changes too much, or puffs both cheeks together, follow the message and repeat that step. A paused or mismatched feed must be fixed before you continue. Closing the window before completion keeps any existing profile.
+
+Virtual Desktop and Steam Link have separate personal profiles. Calibrate each streaming app you use; switching back uses that app's saved profile. This is a short cheek calibration, so you do not need to record or retrain your tongue model.
 
 **Individual cheek suck** uses the separate left and right cheek-suck signals from Virtual Desktop or Steam Link. It starts on with **Strong individual (1/0)**, which emphasizes the stronger side while leaving a deliberate two-cheek suck on both sides. Choose **Balanced** for a softer effect, or turn it off to pass through the streaming app's original values. It does not use negative cheek-puff values.
 
@@ -140,7 +160,8 @@ If Independent Eye Gaze fails to start or stops unexpectedly, the Hub turns it o
 | **Install runtime** stays on “Starting PC runtime setup” | Keep the Hub open and read **Activity**. It now shows the PowerShell launch, current setup phase, and a still-running message every 15 seconds when output stops. If PowerShell never prints its first script message, check Windows Security for a blocked `powershell.exe`, then share the Activity lines, including the PowerShell PID. |
 | **Install runtime** ends with code 1 | Open **Activity** and read the first error above the exit code. If it mentions a missing DLL, `VCRUNTIME`, or a Python import failure, install or repair [Microsoft's latest x64 Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version), then reopen the Hub and run **Install runtime** again. Code 1 has other causes too, so share the full error if it repeats. Do not delete the whole `%LOCALAPPDATA%\QproFaceTracking` folder just because the exit code is 1. |
 | Steam Link source selected but no face or training labels arrive | In Steam Link **Advanced Settings**, turn on **OSC**, **Share eye tracking data**, and **Share face tracking data**; set **OSC Output Port** to **9015**. Close VRCFaceTracking and wait for its module process to exit, then press **Install Steam Link module** in the Hub. Reopen VRCFaceTracking. Remove other Steam Link VRCFaceTracking modules that would use the same port. |
-| Launcher says the tracking source does not match | Close VRCFaceTracking and wait for its module process to exit. Choose the intended **Face-tracking source** on **First-time setup**, install its Qpro module, reopen VRCFaceTracking, then retry. |
+| Launcher says the tracking source does not match | Close VRCFaceTracking and wait for its module process to exit. Choose the intended **Streaming app** on **First-time setup**, install its Qpro module, reopen VRCFaceTracking, then retry. |
+| **Calibrate cheek puff** is waiting for live values | Keep the headset on and the selected streaming app connected. Start tracking in VRCFaceTracking with the matching Qpro module from this build. If the window reports the other streaming app, select the correct **Streaming app** in the Hub or install its matching module with VRCFaceTracking closed. Qpro camera tracking is not required. |
 | AMD Ryzen integrated graphics appears during ROCm setup | Qpro checks for one of the exact discrete Radeon models in the ROCm 10.0 table above. An integrated GPU alone is not enough. Check that Windows and the AMD driver can see the discrete card; otherwise use **Install runtime** for NVIDIA CUDA or CPU. |
 | Independent gaze or convergence fails but ordinary face tracking works | Check the Quest's exact firmware build. Follow the [Singularity Magisk setup in section 1](#1-set-up-eye-tracking-and-independent-gaze-first); it has been reported working on Horizon OS v2.7. |
 | Tongue disappears in some positions | Check that your **newly trained model** actually loaded in Activity. Record those positions again and retrain. |
