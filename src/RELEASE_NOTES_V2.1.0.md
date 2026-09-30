@@ -13,6 +13,7 @@ Follow the PDF guide included in the ZIP, or use the [text setup instructions](h
 - **Face response:** eyebrow sensitivity controls, stronger one-sided smirks, smoother tongue extension/retraction, and brief tongue visibility holds.
 - **Tongue training:** a 22-card **Focused diagonals + facial hair** capture and expanded 58-card **Full dataset** capture. Quick and Focused training extend the model selected in Live tracking.
 - **Runtime setup:** private Python works alongside existing installations, more detailed Activity progress, non-interactive setup launches, clearer failures, and discrete GPU checks. Experimental ROCm 10.0 setup is available for mapped AMD RX 6000, 7000, and 9000 cards; it is enabled only after training and inference checks pass.
+- **ROCm detection:** fixed GPU rejection caused by treating the HIP compiler version as the ROCm release. Setup reuses verified installed packages, reports both version numbers, and includes the RX 6700 and RX 6650 XT device mappings.
 - **Hub and gaze:** layout fixes, dataset deletion, source-specific module buttons, gaze off by default, headset-aware gaze preparation, and automatic recovery when the gaze process fails.
 
 ## Mustachio: optional and highly experimental

@@ -9,12 +9,25 @@ from unittest.mock import patch
 
 from qpro_gpu import (
     experimental_rocm_target_for_gpu_name,
+    is_rocm_10_torch_build,
     is_rocm_721_torch_build,
     is_supported_rocm_gpu_name,
     preferred_torch_device_name,
     require_rocm_device_name,
     validated_torch_device_name,
 )
+
+
+ROCM_10_CARD_TARGETS = {
+    "gfx1030": ("RX 6950 XT", "RX 6900 XT", "RX 6800 XT", "RX 6800"),
+    "gfx1031": ("RX 6750 XT", "RX 6700 XT", "RX 6700"),
+    "gfx1032": ("RX 6650 XT", "RX 6600 XT", "RX 6600"),
+    "gfx1100": ("RX 7900 XTX", "RX 7900 XT", "RX 7900 GRE", "PRO W7900", "PRO W7900 Dual Slot"),
+    "gfx1101": ("RX 7800 XT", "RX 7700 XT", "RX 7700"),
+    "gfx1102": ("RX 7600 XT", "RX 7600"),
+    "gfx1201": ("RX 9070 XT", "RX 9070", "RX 9070 GRE", "AI PRO R9700"),
+    "gfx1200": ("RX 9060 XT", "RX 9060"),
+}
 
 
 class FakeCuda:
@@ -37,10 +50,10 @@ class FakeCuda:
         return self.names[index]
 
 
-def fake_torch(names, *, hip=None, cuda=None, available=True, count_error=False, torch_version=""):
+def fake_torch(names, *, hip=None, rocm=None, cuda=None, available=True, count_error=False, torch_version=""):
     return SimpleNamespace(
         __version__=torch_version,
-        version=SimpleNamespace(hip=hip, cuda=cuda),
+        version=SimpleNamespace(hip=hip, rocm=rocm, cuda=cuda),
         cuda=FakeCuda(names, available, count_error),
     )
 
@@ -68,30 +81,23 @@ class QproGpuTests(unittest.TestCase):
         self.assertFalse(is_supported_rocm_gpu_name("AMD Radeon RX 6800 XT"))
 
     def test_experimental_models_map_to_rocm_10_targets(self):
-        targets = {
-            "gfx1030": ("RX 6950 XT", "RX 6900 XT", "RX 6800 XT", "RX 6800"),
-            "gfx1031": ("RX 6750 XT", "RX 6700 XT"),
-            "gfx1032": ("RX 6600 XT", "RX 6600"),
-            "gfx1100": ("RX 7900 XTX", "RX 7900 XT", "RX 7900 GRE", "PRO W7900", "PRO W7900 Dual Slot"),
-            "gfx1101": ("RX 7800 XT", "RX 7700 XT", "RX 7700"),
-            "gfx1102": ("RX 7600 XT", "RX 7600"),
-            "gfx1201": ("RX 9070 XT", "RX 9070", "RX 9070 GRE", "AI PRO R9700"),
-            "gfx1200": ("RX 9060 XT", "RX 9060"),
-        }
-        for gfx, names in targets.items():
+        for gfx, names in ROCM_10_CARD_TARGETS.items():
             for name in names:
                 full_name = f"AMD Radeon {name}"
                 self.assertEqual(experimental_rocm_target_for_gpu_name(full_name), gfx)
                 self.assertTrue(is_supported_rocm_gpu_name(full_name, "10.0.0"))
         self.assertFalse(is_supported_rocm_gpu_name("AMD Radeon RX 6800 XT", "7.2.1"))
         self.assertEqual(experimental_rocm_target_for_gpu_name("AMD RX 9070 GRE"), "gfx1201")
-        for name in ("AMD Radeon RX 6700", "AMD Radeon RX 6650 XT", "AMD Radeon 780M", "AMD Radeon RX 9050"):
+        for name in ("AMD Radeon RX 6500 XT", "AMD Radeon RX 6400", "AMD Radeon 780M", "AMD Radeon RX 9050"):
             self.assertFalse(is_supported_rocm_gpu_name(name, "10.0.0"))
         self.assertFalse(is_supported_rocm_gpu_name("AMD Radeon RX 6800 XT", "10.1"))
         self.assertTrue(is_supported_rocm_gpu_name("AMD Radeon RX 7900 XTX", "10.0.0"))
 
     def test_experimental_rocm_skips_integrated_gpu(self):
-        torch = fake_torch(["AMD Radeon Graphics", "AMD Radeon RX 6800 XT"], hip="10.0.0")
+        torch = fake_torch(
+            ["AMD Radeon Graphics", "AMD Radeon RX 6800 XT"], hip="7.15.26333",
+            rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+        )
         with tempfile.TemporaryDirectory() as root:
             write_experimental_marker(root, "gfx1030")
             with patch.dict("os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "", "QPRO_ROCM_EXPECTED_GFX_TARGET": ""}), patch(
@@ -104,7 +110,8 @@ class QproGpuTests(unittest.TestCase):
 
     def test_experimental_rocm_uses_only_the_installed_device_target(self):
         torch = fake_torch(
-            ["AMD Radeon RX 7900 XT", "AMD Radeon RX 6800 XT"], hip="10.0.0"
+            ["AMD Radeon RX 7900 XT", "AMD Radeon RX 6800 XT"], hip="7.15.26333",
+            rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
         )
         with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
             "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1030"}
@@ -121,7 +128,10 @@ class QproGpuTests(unittest.TestCase):
                 self.assertEqual(require_rocm_device_name(torch), "cuda:0")
 
     def test_rocm_10_refuses_missing_or_invalid_ready_marker(self):
-        torch = fake_torch(["AMD Radeon RX 7900 XTX"], hip="10.0.0")
+        torch = fake_torch(
+            ["AMD Radeon RX 7900 XTX"], hip="7.15.26333",
+            rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+        )
         with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
             "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1100"}
         ):
@@ -139,6 +149,70 @@ class QproGpuTests(unittest.TestCase):
                 self.assertEqual(preferred_torch_device_name(torch), "cpu")
             Path(root, "qpro-rocm-ready.json").write_text("{broken", encoding="utf-8")
             self.assertEqual(preferred_torch_device_name(torch), "cpu")
+
+    def test_rocm_10_sdk_version_selects_every_mapped_card_and_marker(self):
+        with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
+            "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "", "QPRO_ROCM_EXPECTED_GFX_TARGET": ""}
+        ):
+            for gfx, names in ROCM_10_CARD_TARGETS.items():
+                for name in names:
+                    with self.subTest(gfx=gfx, name=name):
+                        write_experimental_marker(root, gfx)
+                        torch = fake_torch(
+                            ["AMD Radeon Graphics", f"AMD Radeon {name}"], hip="7.15.26333",
+                            rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+                        )
+                        self.assertEqual(preferred_torch_device_name(torch), "cuda:1")
+                        self.assertEqual(require_rocm_device_name(torch), "cuda:1")
+                        self.assertEqual(validated_torch_device_name(torch, "cuda:1"), "cuda:1")
+                        with self.assertRaisesRegex(RuntimeError, "not a supported discrete"):
+                            validated_torch_device_name(torch, "cuda:0")
+
+    def test_rocm_10_wheel_uses_sdk_release_instead_of_hip_version(self):
+        # The installed ROCm 10 Windows wheel reports HIP 7.15.26333.
+        torch = fake_torch(
+            ["AMD Radeon RX 7900 XTX"], hip="7.15.26333",
+            rocm="10.0.0", torch_version="2.13.0+rocm10.0.0", count_error=True,
+        )
+        with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
+            "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1100"}
+        ):
+            self.assertTrue(is_rocm_10_torch_build(torch))
+            self.assertEqual(preferred_torch_device_name(torch), "cuda:0")
+            self.assertEqual(require_rocm_device_name(torch), "cuda:0")
+            self.assertEqual(validated_torch_device_name(torch, "cuda:0"), "cuda:0")
+            self.assertEqual(torch.cuda.count_queries, 0)
+            # Missing SDK metadata is supported only through the exact pin.
+            del torch.version.rocm
+            self.assertTrue(is_rocm_10_torch_build(torch))
+            self.assertEqual(require_rocm_device_name(torch), "cuda:0")
+
+    def test_rocm_10_rejects_mismatched_or_cpu_build_metadata(self):
+        for torch_version, hip, rocm in (
+            ("2.13.0+cpu", None, None),
+            ("2.13.0+cpu", "7.15.26333", "10.0.0"),
+            ("2.14.0+rocm10.0.0", "7.15.26333", "10.0.0"),
+            ("2.13.0+rocm10.0.0", None, "10.0.0"),
+            ("2.13.0+rocm10.0.0", "7.15.26333", "10.1.0"),
+            ("2.13.0+rocm10.0.0", "7.15.26333", "7.2.1"),
+            ("2.13.0+rocm10.0.0", "7.15.26333", ""),
+            ("2.13.0+rocm10.1.0", "7.16.0", "10.1.0"),
+            ("2.9.1+rocm7.2.1", "7.2.53211", "10.0.0"),
+            ("", "10.0.0", None),
+        ):
+            with self.subTest(torch_version=torch_version, hip=hip, rocm=rocm), tempfile.TemporaryDirectory() as root, patch(
+                "qpro_gpu.sys.prefix", root
+            ), patch.dict("os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1100"}):
+                torch = fake_torch(
+                    ["AMD Radeon RX 7900 XTX"], torch_version=torch_version, hip=hip, rocm=rocm,
+                    available=bool(hip),
+                )
+                self.assertFalse(is_rocm_10_torch_build(torch))
+                self.assertEqual(preferred_torch_device_name(torch), "cpu")
+                with self.assertRaises(RuntimeError):
+                    require_rocm_device_name(torch)
+                with self.assertRaises(RuntimeError):
+                    validated_torch_device_name(torch, "cuda:0")
 
     def test_rocm_skips_igpu_at_device_zero(self):
         torch = fake_torch(

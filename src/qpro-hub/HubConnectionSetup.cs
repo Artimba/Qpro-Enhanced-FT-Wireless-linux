@@ -319,8 +319,8 @@ internal sealed partial class HubForm
         return normalized.ToUpperInvariant() switch
         {
             "RADEON RX 6950 XT" or "RADEON RX 6900 XT" or "RADEON RX 6800 XT" or "RADEON RX 6800" => "gfx1030",
-            "RADEON RX 6750 XT" or "RADEON RX 6700 XT" => "gfx1031",
-            "RADEON RX 6600 XT" or "RADEON RX 6600" => "gfx1032",
+            "RADEON RX 6750 XT" or "RADEON RX 6700 XT" or "RADEON RX 6700" => "gfx1031",
+            "RADEON RX 6650 XT" or "RADEON RX 6600 XT" or "RADEON RX 6600" => "gfx1032",
             "RADEON RX 7900 XTX" or "RADEON RX 7900 XT" or "RADEON RX 7900 GRE"
                 or "RADEON PRO W7900" or "RADEON PRO W7900 DUAL SLOT" => "gfx1100",
             "RADEON RX 7800 XT" or "RADEON RX 7700 XT" or "RADEON RX 7700" => "gfx1101",

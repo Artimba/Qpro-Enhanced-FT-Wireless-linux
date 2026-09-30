@@ -21,6 +21,8 @@ $qproRocm10Targets = @{
     'Radeon RX 6800' = 'gfx1030'
     'Radeon RX 6750 XT' = 'gfx1031'
     'Radeon RX 6700 XT' = 'gfx1031'
+    'Radeon RX 6700' = 'gfx1031'
+    'Radeon RX 6650 XT' = 'gfx1032'
     'Radeon RX 6600 XT' = 'gfx1032'
     'Radeon RX 6600' = 'gfx1032'
     'Radeon RX 7900 XT' = 'gfx1100'
@@ -167,7 +169,8 @@ if (-not (Test-QproPython312 $qproRocmPython) -or $qproRecreateForBuild) {
 $qproRuntimeReady = $false
 $qproSavedErrorActionPreference = $ErrorActionPreference
 $qproTorchVersionProbe = if ($qproExperimental) {
-    "import cv2,numpy,torch,torchvision,torchaudio; from qpro_gpu import require_rocm_device_name; require_rocm_device_name(torch); assert torch.__version__ == '2.13.0+rocm10.0.0', torch.__version__; assert str(torch.version.hip).startswith('10.0.'), torch.version.hip"
+    # The ROCm release and HIP compiler build have separate version numbers.
+    "import cv2,numpy,torch,torchvision,torchaudio; from qpro_gpu import is_rocm_10_torch_build,require_rocm_device_name; assert is_rocm_10_torch_build(torch), (torch.__version__,getattr(torch.version,'rocm',None),torch.version.hip); require_rocm_device_name(torch)"
 } else {
     "import cv2,numpy,torch; from qpro_gpu import is_rocm_721_torch_build,require_rocm_device_name; assert is_rocm_721_torch_build(torch), (torch.__version__,torch.version.hip); require_rocm_device_name(torch)"
 }
@@ -175,9 +178,10 @@ try {
     # Windows PowerShell 5.1 can promote Python's expected import traceback on
     # stderr into a terminating NativeCommandError when preference is Stop.
     $ErrorActionPreference = 'Continue'
+    Write-Host 'Checking existing ROCm packages and the selected discrete GPU...'
     & $qproRocmPython -c $qproTorchVersionProbe > $null 2>&1
     $qproRuntimeReady = $LASTEXITCODE -eq 0
-    if ($qproExperimental -and ($qproPreviousReady.gfxTarget -ne $qproGfxTarget -or $qproPreviousReady.rocmVersion -ne '10.0.0' -or $qproPreviousReady.supportTier -ne 'experimental-rocm-10')) {
+    if ($qproExperimental -and $null -ne $qproPreviousReady -and ($qproPreviousReady.gfxTarget -ne $qproGfxTarget -or $qproPreviousReady.rocmVersion -ne '10.0.0' -or $qproPreviousReady.supportTier -ne 'experimental-rocm-10')) {
         $qproRuntimeReady = $false
         Write-Host "Configuring the ROCm 10.0 environment for $qproGfxTarget."
     }
@@ -223,6 +227,10 @@ if (-not $qproRuntimeReady) {
     if ($LASTEXITCODE -ne 0) { throw 'Installing QproFaceTracking Python requirements failed.' }
 }
 
+if ($qproRuntimeReady) {
+    Write-Host 'Required ROCm packages are already installed. Running GPU training and inference checks.'
+}
+
 $qproFix = "if torch.version.hip:`r`n    # Windows MIOpen HIPRTC cannot compile these tongue-model BatchNorm kernels.`r`n    torch.backends.cudnn.enabled = False`r`n"
 foreach ($qproScript in @('train_tongue_model.py', 'tongue_model_preview.py')) {
     $qproScriptPath = Join-Path $QproRoot $qproScript
@@ -239,7 +247,7 @@ foreach ($qproScript in @('train_tongue_model.py', 'tongue_model_preview.py')) {
     [System.IO.File]::WriteAllText($qproScriptPath, $qproUpdated, [System.Text.UTF8Encoding]::new($false))
 }
 
-& $qproRocmPython -c "import cv2,numpy,torch; from qpro_gpu import require_rocm_device_name; device=require_rocm_device_name(torch); print('PyTorch:',torch.__version__); print('HIP:',torch.version.hip); print('GPU:',torch.cuda.get_device_name(int(device.split(':')[1]))); print('Device:',device)"
+& $qproRocmPython -c "import cv2,numpy,torch; from qpro_gpu import require_rocm_device_name; print('PyTorch:',torch.__version__,flush=True); print('ROCm release:',getattr(torch.version,'rocm',None),flush=True); print('HIP build:',torch.version.hip,flush=True); print('GPU available:',torch.cuda.is_available(),flush=True); device=require_rocm_device_name(torch); print('GPU:',torch.cuda.get_device_name(int(device.split(':')[1]))); print('Device:',device)"
 if ($LASTEXITCODE -ne 0) { throw 'ROCm installed, but PyTorch did not detect a supported discrete Radeon GPU. Integrated graphics are not selected.' }
 
 & $qproRocmPython -c "import sys,torch; from qpro_gpu import require_rocm_device_name; from train_tongue_model import create_model; device=require_rocm_device_name(torch); assert not torch.backends.cudnn.enabled; c=torch.load(sys.argv[1],map_location='cpu',weights_only=False); m=create_model(c['architecture'],list(c['targetNames'])).to(device); x=torch.rand(2,2,c['imageSize'],c['imageSize'],device=device); m(x).float().square().mean().backward(); torch.cuda.synchronize(device); print('GPU training smoke test passed on',device)" $qproGateModel

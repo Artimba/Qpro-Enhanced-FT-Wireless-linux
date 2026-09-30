@@ -37,8 +37,8 @@ _EXPERIMENTAL_RADEON_TARGETS = {
     name.casefold(): gfx
     for gfx, names in {
         "gfx1030": ("Radeon RX 6950 XT", "Radeon RX 6900 XT", "Radeon RX 6800 XT", "Radeon RX 6800"),
-        "gfx1031": ("Radeon RX 6750 XT", "Radeon RX 6700 XT"),
-        "gfx1032": ("Radeon RX 6600 XT", "Radeon RX 6600"),
+        "gfx1031": ("Radeon RX 6750 XT", "Radeon RX 6700 XT", "Radeon RX 6700"),
+        "gfx1032": ("Radeon RX 6650 XT", "Radeon RX 6600 XT", "Radeon RX 6600"),
         "gfx1100": (
             "Radeon RX 7900 XTX", "Radeon RX 7900 XT", "Radeon RX 7900 GRE",
             "Radeon PRO W7900", "Radeon PRO W7900 Dual Slot",
@@ -113,11 +113,38 @@ def is_rocm_721_torch_build(torch_module: object) -> bool:
     )
 
 
+def is_rocm_10_torch_build(torch_module: object) -> bool:
+    """Match Qpro's pinned ROCm 10 wheel independently of the HIP version.
+
+    ROCm 10.0.0 ships HIP 7.15.26333. New wheels expose the SDK release as
+    ``torch.version.rocm``; the exact wheel suffix identifies it when that
+    metadata is absent. Explicit conflicting metadata is never accepted.
+    """
+    if (
+        str(getattr(torch_module, "__version__", "")) != "2.13.0+rocm10.0.0"
+        or not getattr(torch_module.version, "hip", None)
+    ):
+        return False
+    rocm = getattr(torch_module.version, "rocm", None)
+    return rocm is None or str(rocm) == "10.0.0"
+
+
 def _rocm_build_version(torch_module: object) -> str:
     """Identify the ROCm wheel release; HIP can report its own build number."""
     hip = str(getattr(torch_module.version, "hip", "") or "")
+    if is_rocm_10_torch_build(torch_module):
+        return "10.0.0"
+    if "+rocm10." in str(getattr(torch_module, "__version__", "")):
+        return ""
+    rocm = getattr(torch_module.version, "rocm", None)
+    if rocm is not None:
+        # A different ROCm 10.0 wheel is not the build installed and verified
+        # by Qpro. Keep future/unknown releases outside the device allowlist.
+        return "" if str(rocm).startswith("10.0") else str(rocm)
     if is_rocm_721_torch_build(torch_module):
         return "7.2.1"
+    if hip.startswith("10.0"):
+        return ""
     return hip
 
 
@@ -128,8 +155,8 @@ def supported_rocm_device_name(torch_module: object) -> str | None:
     try:
         if not torch_module.cuda.is_available():
             return None
-        experimental = str(torch_module.version.hip).startswith("10.0")
         rocm_build = _rocm_build_version(torch_module)
+        experimental = rocm_build.startswith("10.0")
         expected_target = _expected_experimental_target() if experimental else None
         if experimental and expected_target is None:
             return None
@@ -174,7 +201,7 @@ def require_rocm_device_name(torch_module: object) -> str:
     """Fail before work starts if ROCm cannot see a supported discrete GPU."""
     device = supported_rocm_device_name(torch_module)
     if device is None:
-        experimental = str(getattr(torch_module.version, "hip", "")).startswith("10.0")
+        experimental = _rocm_build_version(torch_module).startswith("10.0")
         expected_target = _expected_experimental_target() if experimental else None
         if experimental and expected_target is None:
             raise RuntimeError(
@@ -209,11 +236,12 @@ def validated_torch_device_name(torch_module: object, requested: str) -> str:
             name = torch_module.cuda.get_device_name(index)
         except Exception as exc:
             raise RuntimeError(f"ROCm device {requested} is unavailable") from exc
-        experimental = str(torch_module.version.hip).startswith("10.0")
+        rocm_build = _rocm_build_version(torch_module)
+        experimental = rocm_build.startswith("10.0")
         expected_target = _expected_experimental_target() if experimental else None
         if experimental and expected_target is None:
             raise RuntimeError("ROCm 10.0 has no valid Qpro readiness record for a discrete GPU target")
-        if not is_supported_rocm_gpu_name(name, _rocm_build_version(torch_module)) or (
+        if not is_supported_rocm_gpu_name(name, rocm_build) or (
             expected_target is not None and experimental_rocm_target_for_gpu_name(name) != expected_target
         ):
             raise RuntimeError(
