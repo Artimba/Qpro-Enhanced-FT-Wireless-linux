@@ -8,6 +8,25 @@ internal readonly record struct NativeTongueWeights(
 
 internal static class NativeTongueMapping
 {
+    internal const int SlotCount = 12;
+
+    internal static void WriteSlots(NativeTongueWeights tongue, Span<float> slots)
+    {
+        if (slots.Length != SlotCount)
+            throw new ArgumentException($"Tongue output must contain {SlotCount} slots", nameof(slots));
+
+        // Native layouts expose different subsets. Clear every slot before
+        // writing the current layout so values from the previous one cannot linger.
+        slots.Clear();
+        slots[0] = tongue.Out;
+        slots[1] = tongue.Up.GetValueOrDefault();
+        slots[2] = tongue.Down.GetValueOrDefault();
+        slots[3] = tongue.Left.GetValueOrDefault();
+        slots[4] = tongue.Right.GetValueOrDefault();
+        slots[6] = tongue.BendDown.GetValueOrDefault();
+        slots[7] = tongue.CurlUp.GetValueOrDefault();
+    }
+
     internal static NativeTongueWeights? Resolve(ReadOnlySpan<float> weights,
         NativeFaceSource source, byte faceFlags, bool customFresh, bool customEnabled)
     {

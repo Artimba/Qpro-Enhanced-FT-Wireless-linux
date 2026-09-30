@@ -354,6 +354,21 @@ Check(NativeTongueMapping.Resolve(source.Expressions, NativeFaceSource.SteamLink
 Check(NativeTongueMapping.Resolve(source.Expressions, NativeFaceSource.VirtualDesktop, 3,
     customFresh: true, customEnabled: true) is null, "fresh custom tongue overrides Virtual Desktop native tongue");
 
+// Reuse one output buffer as the native source changes. Optional channels from
+// the previous layout must return to zero, including camera-only channels.
+float[] tongueSlots = Enumerable.Repeat(0.7f, NativeTongueMapping.SlotCount).ToArray();
+NativeTongueMapping.WriteSlots(vdNative, tongueSlots);
+CheckNear(tongueSlots[3], 0.25f, "Virtual Desktop directional tongue written");
+CheckNear(tongueSlots[5], 0.0f, "native tongue clears camera-only roll");
+CheckNear(tongueSlots[7], 0.0f, "full-face layout clears prior curl");
+NativeTongueMapping.WriteSlots(vdBasicNative, tongueSlots);
+CheckNear(tongueSlots[3], 0.0f, "basic layout clears previous left direction");
+CheckNear(tongueSlots[7], 0.25f, "basic layout writes curl");
+NativeTongueMapping.WriteSlots(steamNative, tongueSlots);
+CheckNear(tongueSlots[0], 0.85f, "Steam layout writes tongue out");
+for (int index = 1; index < tongueSlots.Length; ++index)
+    CheckNear(tongueSlots[index], 0.0f, $"Steam layout clears tongue slot {index}");
+
 float[] lipWeights = new float[70];
 lipWeights[45] = 0.9f;  // LipSuckLt
 lipWeights[47] = 0.85f; // LipSuckRt

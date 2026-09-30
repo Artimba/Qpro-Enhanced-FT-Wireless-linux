@@ -49,6 +49,22 @@ public sealed class TrackingModule : ExtTrackingModule
         (50, [29]), (51, [51]), (52, [50]), (53, [53, 55]),
         (54, [52, 54]), (55, [49]), (56, [48])
     ];
+    // Matches the camera packet and NativeTongueMapping.WriteSlots order.
+    private static readonly int[] TongueExpressions =
+    [
+        (int)UnifiedExpressions.TongueOut,
+        (int)UnifiedExpressions.TongueUp,
+        (int)UnifiedExpressions.TongueDown,
+        (int)UnifiedExpressions.TongueLeft,
+        (int)UnifiedExpressions.TongueRight,
+        (int)UnifiedExpressions.TongueRoll,
+        (int)UnifiedExpressions.TongueBendDown,
+        (int)UnifiedExpressions.TongueCurlUp,
+        (int)UnifiedExpressions.TongueSquish,
+        (int)UnifiedExpressions.TongueFlat,
+        (int)UnifiedExpressions.TongueTwistLeft,
+        (int)UnifiedExpressions.TongueTwistRight
+    ];
 
     private readonly byte[] _first = new byte[StateBytes];
     private readonly byte[] _second = new byte[StateBytes];
@@ -84,10 +100,9 @@ public sealed class TrackingModule : ExtTrackingModule
     private float _rightGazeX;
     private float _rightGazeY;
     private byte _gazeFlags;
-    private readonly float[] _tongueValues = new float[12];
+    private readonly float[] _tongueValues = new float[NativeTongueMapping.SlotCount];
     private bool _tongueEnabled;
     private bool _tongueDirty;
-    private bool _customTongueWasApplied;
     private long _lastTongueTick;
     private long _lastPupilTick;
     private byte _pupilFlags;
@@ -652,24 +667,13 @@ public sealed class TrackingModule : ExtTrackingModule
             {
                 ApplyTongueOverride();
                 _tongueDirty = false;
-                _customTongueWasApplied = true;
             }
         }
         else
         {
-            if (_customTongueWasApplied)
-            {
-                ClearDetailedTongueOverride();
-                _customTongueWasApplied = false;
-            }
-            NativeTongueWeights tongue = nativeTongue.Value;
-            Set((int)UnifiedExpressions.TongueOut, tongue.Out);
-            if (tongue.Up is float up) Set((int)UnifiedExpressions.TongueUp, up);
-            if (tongue.Down is float down) Set((int)UnifiedExpressions.TongueDown, down);
-            if (tongue.Left is float left) Set((int)UnifiedExpressions.TongueLeft, left);
-            if (tongue.Right is float right) Set((int)UnifiedExpressions.TongueRight, right);
-            if (tongue.BendDown is float bendDown) Set((int)UnifiedExpressions.TongueBendDown, bendDown);
-            if (tongue.CurlUp is float curlUp) Set((int)UnifiedExpressions.TongueCurlUp, curlUp);
+            Span<float> nativeSlots = stackalloc float[NativeTongueMapping.SlotCount];
+            NativeTongueMapping.WriteSlots(nativeTongue.Value, nativeSlots);
+            SetTongueSlots(nativeSlots);
         }
     }
 
@@ -749,34 +753,14 @@ public sealed class TrackingModule : ExtTrackingModule
 
     private void ApplyTongueOverride()
     {
-        Set((int)UnifiedExpressions.TongueOut, _tongueValues[0]);
-        Set((int)UnifiedExpressions.TongueUp, _tongueValues[1]);
-        Set((int)UnifiedExpressions.TongueDown, _tongueValues[2]);
-        Set((int)UnifiedExpressions.TongueLeft, _tongueValues[3]);
-        Set((int)UnifiedExpressions.TongueRight, _tongueValues[4]);
-        Set((int)UnifiedExpressions.TongueRoll, _tongueValues[5]);
-        Set((int)UnifiedExpressions.TongueBendDown, _tongueValues[6]);
-        Set((int)UnifiedExpressions.TongueCurlUp, _tongueValues[7]);
-        Set((int)UnifiedExpressions.TongueSquish, _tongueValues[8]);
-        Set((int)UnifiedExpressions.TongueFlat, _tongueValues[9]);
-        Set((int)UnifiedExpressions.TongueTwistLeft, _tongueValues[10]);
-        Set((int)UnifiedExpressions.TongueTwistRight, _tongueValues[11]);
+        SetTongueSlots(_tongueValues);
     }
 
-    private static void ClearDetailedTongueOverride()
+    private static void SetTongueSlots(ReadOnlySpan<float> slots)
     {
-        Set((int)UnifiedExpressions.TongueOut, 0.0f);
-        Set((int)UnifiedExpressions.TongueUp, 0.0f);
-        Set((int)UnifiedExpressions.TongueDown, 0.0f);
-        Set((int)UnifiedExpressions.TongueLeft, 0.0f);
-        Set((int)UnifiedExpressions.TongueRight, 0.0f);
-        Set((int)UnifiedExpressions.TongueRoll, 0.0f);
-        Set((int)UnifiedExpressions.TongueBendDown, 0.0f);
-        Set((int)UnifiedExpressions.TongueCurlUp, 0.0f);
-        Set((int)UnifiedExpressions.TongueSquish, 0.0f);
-        Set((int)UnifiedExpressions.TongueFlat, 0.0f);
-        Set((int)UnifiedExpressions.TongueTwistLeft, 0.0f);
-        Set((int)UnifiedExpressions.TongueTwistRight, 0.0f);
+        Debug.Assert(slots.Length == TongueExpressions.Length);
+        for (int index = 0; index < TongueExpressions.Length; ++index)
+            Set(TongueExpressions[index], slots[index]);
     }
 
     private static void Set(int expression, float value) =>
