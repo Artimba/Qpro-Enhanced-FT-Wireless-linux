@@ -1,8 +1,10 @@
+using Qpro.Shared;
+
 namespace Qpro.GazeBridge;
 
 internal readonly record struct CheekPuffWeights(float Left, float Right);
 
-internal enum CheekPuffMode { Off, Balanced, Strong }
+internal enum CheekPuffMode { Off, Balanced, Strong, Calibrated }
 
 internal static class CheekPuffMapping
 {
@@ -18,11 +20,9 @@ internal static class CheekPuffMapping
 
     internal static CheekPuffWeights FromFaceWeights(ReadOnlySpan<float> weights, bool strong = false)
     {
-        if (weights.Length < 4)
-            throw new ArgumentException("Face weights must contain both cheek puff expressions", nameof(weights));
-
-        float left = Math.Clamp(weights[2], 0.0f, 1.0f);
-        float right = Math.Clamp(weights[3], 0.0f, 1.0f);
+        CheekPuffWeights raw = RawFromFaceWeights(weights);
+        float left = raw.Left;
+        float right = raw.Right;
         float peak = MathF.Max(left, right);
         if (peak < 0.02f)
             return new CheekPuffWeights(0.0f, 0.0f);
@@ -59,6 +59,24 @@ internal static class CheekPuffMapping
             Math.Clamp((balanced.Right - 0.03f) * 7.0f, 0.0f, 1.0f));
     }
 
+    internal static CheekPuffWeights CalibratedFromFaceWeights(
+        ReadOnlySpan<float> weights, CheekPuffCalibration? calibration)
+    {
+        // Separate left and right with the existing Balanced algorithm before
+        // applying independently measured relaxed and full-strength anchors.
+        CheekPuffWeights balanced = FromFaceWeights(weights);
+        if (calibration is not { } valid || !CheekPuffCalibrationProfile.IsValid(valid))
+            return balanced;
+        return new CheekPuffWeights(
+            Normalize(balanced.Left, valid.LeftNeutral, valid.LeftFull),
+            Normalize(balanced.Right, valid.RightNeutral, valid.RightFull));
+    }
+
+    private static float Normalize(float value, float neutral, float full)
+        => float.IsFinite(value)
+            ? Math.Clamp((value - neutral) / (full - neutral), 0.0f, 1.0f)
+            : 0.0f;
+
     private static float SmoothStep(float low, float high, float value)
     {
         float t = Math.Clamp((value - low) / (high - low), 0.0f, 1.0f);
@@ -75,18 +93,31 @@ internal sealed class CheekPuffTracker
     private const long SideConfirmationMs = 60;
     private const long BothFromNeutralMs = 40;
     private const long BothFromSideMs = 220;
+    private const float CalibratedResponseMs = 100.0f;
+    private const long CalibratedResetGapMs = 500;
 
     private enum Pose { Neutral, Left, Right, Both }
 
     private Pose _pose;
     private Pose _candidate;
     private long _candidateSinceMs;
+    private CheekPuffMode _lastMode;
+    private bool _calibratedInitialized;
+    private long _lastCalibratedTickMs;
+    private CheekPuffCalibration? _lastCalibration;
+    private CheekPuffWeights _calibratedOutput;
 
     internal CheekPuffWeights Update(ReadOnlySpan<float> weights, bool strong, long nowMs)
         => Update(weights, strong ? CheekPuffMode.Strong : CheekPuffMode.Balanced, nowMs);
 
-    internal CheekPuffWeights Update(ReadOnlySpan<float> weights, CheekPuffMode mode, long nowMs)
+    internal CheekPuffWeights Update(ReadOnlySpan<float> weights, CheekPuffMode mode,
+        long nowMs, CheekPuffCalibration? calibration = null)
     {
+        if (_lastMode != mode)
+        {
+            Reset();
+            _lastMode = mode;
+        }
         if (mode == CheekPuffMode.Off)
         {
             Reset();
@@ -96,6 +127,34 @@ internal sealed class CheekPuffTracker
         {
             Reset();
             return CheekPuffMapping.FromFaceWeights(weights);
+        }
+        if (mode == CheekPuffMode.Calibrated)
+        {
+            if (calibration is not { } valid || !CheekPuffCalibrationProfile.IsValid(valid))
+            {
+                Reset();
+                return CheekPuffMapping.FromFaceWeights(weights);
+            }
+            CheekPuffWeights target = CheekPuffMapping.CalibratedFromFaceWeights(weights, valid);
+            long elapsedMs = nowMs - _lastCalibratedTickMs;
+            if (!_calibratedInitialized || _lastCalibration != valid ||
+                elapsedMs < 0 || elapsedMs >= CalibratedResetGapMs)
+            {
+                _calibratedOutput = target;
+                _calibratedInitialized = true;
+                _lastCalibration = valid;
+            }
+            else
+            {
+                // Filtering after normalization limits amplified sensor noise.
+                // Elapsed time keeps the response consistent across frame rates.
+                float blend = 1.0f - MathF.Exp(-elapsedMs / CalibratedResponseMs);
+                _calibratedOutput = new CheekPuffWeights(
+                    _calibratedOutput.Left + (target.Left - _calibratedOutput.Left) * blend,
+                    _calibratedOutput.Right + (target.Right - _calibratedOutput.Right) * blend);
+            }
+            _lastCalibratedTickMs = nowMs;
+            return _calibratedOutput;
         }
         if (weights.Length < 4)
             throw new ArgumentException("Face weights must contain both cheek puff expressions", nameof(weights));
@@ -167,6 +226,8 @@ internal sealed class CheekPuffTracker
     {
         _pose = Pose.Neutral;
         ClearCandidate();
+        _calibratedInitialized = false;
+        _lastCalibration = null;
     }
 
     private Pose Observe(float left, float right, float peak)

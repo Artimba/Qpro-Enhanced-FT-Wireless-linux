@@ -1,6 +1,16 @@
 using System.Buffers.Binary;
 using System.Text;
 using Qpro.GazeBridge;
+using Qpro.Shared;
+
+foreach (string faceSource in new[] { CheekPuffCalibrationProfile.VirtualDesktopSource, CheekPuffCalibrationProfile.SteamLinkSource })
+{
+    CheekPuffCalibration? developerBaseline = DeveloperCheekPuffBaseline.ForSource(faceSource);
+    Check(developerBaseline.HasValue && CheekPuffCalibrationProfile.IsValid(developerBaseline.Value),
+        $"valid bundled cheek baseline for {faceSource}");
+}
+Check(DeveloperCheekPuffBaseline.ForSource("unsupported") is null,
+    "unknown source has no bundled cheek baseline");
 
 if (args.Length == 2 && args[0] == "--live-probe" && int.TryParse(args[1], out int seconds))
 {
@@ -231,6 +241,169 @@ cheekWeights[2] = -0.2f;
 cheekWeights[3] = float.PositiveInfinity;
 CheckCheeks(offModeTracker.Update(cheekWeights, CheekPuffMode.Off, 60), 0, 0,
     "off mode rejects nonfinite and negative native cheek weights");
+
+// The calibrated mode rescales the existing Balanced output continuously,
+// using independent left and right neutral/full anchors for each source.
+CheekPuffCalibration vdCalibration = new(.10f, .50f, .20f, .60f);
+CheekPuffCalibration steamCalibration = new(.05f, .45f, .05f, .85f);
+Check(CheekPuffCalibrationProfile.IsValid(vdCalibration), "valid calibration anchors");
+var calibratedTracker = new CheekPuffTracker();
+cheekWeights[2] = .30f;
+cheekWeights[3] = .30f;
+CheckCheeks(CheekPuffMapping.CalibratedFromFaceWeights(cheekWeights, vdCalibration),
+    .50f, .25f, "calibration interpolates independently between anchors");
+cheekWeights[2] = .10f;
+cheekWeights[3] = .10f;
+CheckCheeks(CheekPuffMapping.CalibratedFromFaceWeights(cheekWeights, vdCalibration),
+    0, 0, "calibration clamps below neutral anchors");
+cheekWeights[2] = .80f;
+cheekWeights[3] = .80f;
+CheckCheeks(CheekPuffMapping.CalibratedFromFaceWeights(cheekWeights, vdCalibration),
+    1, 1, "calibration clamps above full anchors");
+cheekWeights[2] = .38f;
+cheekWeights[3] = .27f;
+CheekPuffWeights separatedPuff = CheekPuffMapping.FromFaceWeights(cheekWeights);
+CheckNear(separatedPuff.Right, 0, "calibration fixture separates one cheek");
+CheckCheeks(CheekPuffMapping.CalibratedFromFaceWeights(cheekWeights, vdCalibration),
+    Math.Clamp((separatedPuff.Left - .10f) / .40f, 0, 1), 0,
+    "calibration preserves Balanced side separation");
+CheckCheeks(calibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 85),
+    separatedPuff.Left, separatedPuff.Right,
+    "missing calibration falls back to Balanced");
+CheekPuffCalibration reversedCalibration = new(.7f, .2f, .1f, .9f);
+Check(!CheekPuffCalibrationProfile.IsValid(reversedCalibration), "reversed anchors are invalid");
+CheckCheeks(calibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 90, reversedCalibration),
+    separatedPuff.Left, separatedPuff.Right,
+    "invalid calibration falls back to Balanced");
+CheckCheeks(calibratedTracker.Update(cheekWeights, CheekPuffMode.Off, 95, vdCalibration),
+    .38f, .27f, "calibration cannot change Off native passthrough");
+CheckCheeks(calibratedTracker.Update(cheekWeights, CheekPuffMode.Strong, 100, vdCalibration),
+    1, 0, "calibration cannot change Strong one-or-zero output");
+cheekWeights[2] = float.NaN;
+cheekWeights[3] = .20f;
+CheckCheeks(calibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 105, vdCalibration),
+    0, 1, "invalid source strength cannot poison the other calibrated cheek");
+Check(!CheekPuffCalibrationProfile.IsValid(new(0, float.NaN, 0, 1)),
+    "nonfinite calibration anchors are invalid");
+Check(!CheekPuffCalibrationProfile.IsValid(new(0, 1.1f, 0, 1)),
+    "out-of-range calibration anchors are invalid");
+Check(!CheekPuffCalibrationProfile.IsValid(new(.2f, .21f, 0, 1)),
+    "nearly equal anchors cannot amplify source noise");
+
+CheekPuffCalibration unitCalibration = new(0, 1, 0, 1);
+var slowCalibratedTracker = new CheekPuffTracker();
+var fastCalibratedTracker = new CheekPuffTracker();
+cheekWeights[2] = cheekWeights[3] = .20f;
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1000, unitCalibration),
+    .20f, .20f, "first calibrated sample begins at the current strength");
+fastCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1000, unitCalibration);
+cheekWeights[2] = cheekWeights[3] = .80f;
+CheekPuffWeights slowResponse = slowCalibratedTracker.Update(
+    cheekWeights, CheekPuffMode.Calibrated, 1100, unitCalibration);
+fastCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1050, unitCalibration);
+CheekPuffWeights fastResponse = fastCalibratedTracker.Update(
+    cheekWeights, CheekPuffMode.Calibrated, 1100, unitCalibration);
+float expectedRise = .20f + .60f * (1 - MathF.Exp(-1));
+CheckCheeks(slowResponse, expectedRise, expectedRise,
+    "calibrated strength approaches a new target over 100 milliseconds");
+CheckCheeks(fastResponse, slowResponse.Left, slowResponse.Right,
+    "calibrated smoothing is independent of sampling frequency");
+cheekWeights[2] = cheekWeights[3] = 0;
+CheekPuffWeights releasedResponse = slowCalibratedTracker.Update(
+    cheekWeights, CheekPuffMode.Calibrated, 1200, unitCalibration);
+CheckCheeks(releasedResponse, expectedRise * MathF.Exp(-1), expectedRise * MathF.Exp(-1),
+    "calibrated cheek release is smooth");
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1700, unitCalibration),
+    0, 0, "a source gap discards stale calibrated strength");
+cheekWeights[2] = cheekWeights[3] = .20f;
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1600, unitCalibration),
+    .20f, .20f, "a backwards timestamp resets calibrated smoothing");
+cheekWeights[2] = cheekWeights[3] = .80f;
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Off, 1710, unitCalibration),
+    .80f, .80f, "switching off calibration immediately restores native strength");
+cheekWeights[2] = cheekWeights[3] = .20f;
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1720, unitCalibration),
+    .20f, .20f, "returning to calibration cannot reuse the prior mode's output");
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1730,
+    new(0, .50f, 0, .50f)), .40f, .40f,
+    "new calibration anchors discard the previous normalized strength");
+CheckCheeks(slowCalibratedTracker.Update(cheekWeights, CheekPuffMode.Calibrated, 1740),
+    .20f, .20f, "removing a calibration profile immediately restores Balanced fallback");
+
+string profileTestDirectory = Path.Combine(Path.GetTempPath(),
+    $"qpro-cheek-calibration-tests-{Guid.NewGuid():N}");
+try
+{
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory) is null,
+        "missing personal profile is absent");
+    CheekPuffCalibrationProfile.Save(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, vdCalibration, profileTestDirectory);
+    CheekPuffCalibrationProfile.Save(
+        CheekPuffCalibrationProfile.SteamLinkSource, steamCalibration, profileTestDirectory);
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory) == vdCalibration,
+        "Virtual Desktop profile round trips independently");
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.SteamLinkSource, profileTestDirectory) == steamCalibration,
+        "Steam Link profile round trips independently");
+    Check(!Directory.EnumerateFiles(profileTestDirectory, "*.tmp").Any(),
+        "atomic profile writes leave no temporary files");
+    bool rejectedInvalidSave = false;
+    try
+    {
+        CheekPuffCalibrationProfile.Save(
+            CheekPuffCalibrationProfile.VirtualDesktopSource,
+            reversedCalibration, profileTestDirectory);
+    }
+    catch (ArgumentOutOfRangeException) { rejectedInvalidSave = true; }
+    Check(rejectedInvalidSave, "invalid profile is rejected before replacing a valid profile");
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory) == vdCalibration,
+        "invalid save leaves existing source profile intact");
+    File.WriteAllText(CheekPuffCalibrationProfile.ProfilePath(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory),
+        "{\"version\":1,\"leftNeutral\":0.5,\"leftFull\":0.4,\"rightNeutral\":0,\"rightFull\":1}");
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory) is null,
+        "invalid stored anchors fall back safely");
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.SteamLinkSource, profileTestDirectory) == steamCalibration,
+        "corrupt Virtual Desktop profile does not affect Steam Link");
+    File.WriteAllText(CheekPuffCalibrationProfile.ProfilePath(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory), "{broken");
+    Check(CheekPuffCalibrationProfile.Load(
+        CheekPuffCalibrationProfile.VirtualDesktopSource, profileTestDirectory) is null,
+        "malformed profile falls back safely");
+}
+finally
+{
+    if (Directory.Exists(profileTestDirectory))
+        Directory.Delete(profileTestDirectory, recursive: true);
+}
+
+byte[] cheekPacket = CheekPuffTelemetry.Create(
+    CheekPuffTelemetry.SourceVirtualDesktop, .25f, .75f);
+Check(CheekPuffTelemetry.TryParse(cheekPacket, out byte cheekSource,
+    out float cheekLeft, out float cheekRight), "cheek telemetry packet round trips");
+Check(cheekSource == CheekPuffTelemetry.SourceVirtualDesktop,
+    "cheek telemetry preserves source identity");
+CheckNear(cheekLeft, .25f, "cheek telemetry preserves left strength");
+CheckNear(cheekRight, .75f, "cheek telemetry preserves right strength");
+cheekPacket[4] = 99;
+Check(!CheekPuffTelemetry.TryParse(cheekPacket, out _, out _, out _),
+    "cheek telemetry rejects unknown source");
+cheekPacket = CheekPuffTelemetry.Create(CheekPuffTelemetry.SourceSteamLink, .2f, .8f);
+BinaryPrimitives.WriteInt32LittleEndian(cheekPacket.AsSpan(8),
+    BitConverter.SingleToInt32Bits(float.NaN));
+Check(!CheekPuffTelemetry.TryParse(cheekPacket, out _, out _, out _),
+    "cheek telemetry rejects nonfinite strength");
+cheekPacket = CheekPuffTelemetry.Create(CheekPuffTelemetry.SourceSteamLink, .2f, .8f);
+cheekPacket[5] = 1;
+Check(!CheekPuffTelemetry.TryParse(cheekPacket, out _, out _, out _),
+    "cheek telemetry rejects unsupported reserved flags");
+Check(!CheekPuffTelemetry.TryParse(cheekPacket.AsSpan(0, 15), out _, out _, out _),
+    "cheek telemetry rejects incomplete packets");
 
 // Suck has its own XR_FB channels. A negative puff weight does not mean suck.
 var suckTracker = new CheekSuckTracker();

@@ -12,5 +12,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../shared/EyebrowPreference.cs" Link="EyebrowPreference.cs" />
+    <Compile Include="../shared/CheekPuffCalibrationProfile.cs" Link="CheekPuffCalibrationProfile.cs" />
+    <Compile Include="../shared/CheekPuffTelemetry.cs" Link="CheekPuffTelemetry.cs" />
+    <Compile Include="../shared/DeveloperCheekPuffBaseline.cs" Link="DeveloperCheekPuffBaseline.cs" />
   </ItemGroup>
 </Project>
