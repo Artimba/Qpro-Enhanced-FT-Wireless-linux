@@ -1,4 +1,9 @@
+import json
+import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import torch
@@ -6,6 +11,7 @@ import torch
 from train_tongue_model import (
     SpatialStereoTongueModel,
     StereoTongueModel,
+    TongueFrames,
     balanced_step_weights,
     blocked_train_validation_split,
     classification_at_threshold,
@@ -13,9 +19,108 @@ from train_tongue_model import (
     shade_local_mouth_area,
     target_loss,
 )
+from tongue_image_processing import preprocess_stereo_images
 
 
 class TongueTrainingTests(unittest.TestCase):
+    @staticmethod
+    def make_preprocessing_cache(root):
+        pixels = np.tile(np.arange(128, dtype=np.uint8), (128, 1))
+        images = np.repeat(np.stack([pixels, pixels.T])[None], 12, axis=0)
+        np.save(root / "images.npy", images)
+        np.save(root / "targets.npy", np.zeros((12, 4), np.float32))
+        np.save(root / "native_tongue_out.npy", np.zeros(12, np.float32))
+        np.save(root / "step_ids.npy", np.repeat(np.arange(2), 6))
+        np.save(root / "trainable.npy", np.ones(12, bool))
+        (root / "metadata.json").write_text(json.dumps({
+            "targetNames": ["visibility", "horizontal", "vertical", "extension"],
+            "datasetType": "manual-stereo-stills", "imageSize": 128,
+        }), encoding="utf-8")
+        return images
+
+    def test_dataset_processing_matches_inference_without_changing_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory)
+            original = self.make_preprocessing_cache(cache)
+            for mode in ("raw-v1", "clahe-v1"):
+                dataset = TongueFrames(cache, np.asarray([0]), False, mode)
+                actual, _, _ = dataset[0]
+                expected = torch.from_numpy(
+                    preprocess_stereo_images(original[0], mode).copy()
+                ).float().div_(255)
+                self.assertTrue(torch.equal(actual, expected))
+                for array in (dataset.images, dataset.targets, dataset.native):
+                    array._mmap.close()
+            np.testing.assert_array_equal(np.load(cache / "images.npy"), original)
+
+    def test_refinement_inherits_processing_and_persists_explicit_override(self):
+        import train_tongue_model
+        for parent_mode, override, expected in (
+            (None, None, "raw-v1"),
+            ("clahe-v1", None, "clahe-v1"),
+            (None, "clahe-v1", "clahe-v1"),
+        ):
+            with self.subTest(parent=parent_mode, override=override), \
+                    tempfile.TemporaryDirectory() as directory:
+                cache = Path(directory)
+                self.make_preprocessing_cache(cache)
+                model = torch.nn.Linear(1, 1)
+                parent = {
+                    "targetNames": ["visibility", "horizontal", "vertical", "extension"],
+                    "architecture": "legacy-late-fusion-v1", "imageSize": 128,
+                    "modelState": model.state_dict(),
+                }
+                if parent_mode is not None:
+                    parent["inputPreprocessing"] = parent_mode
+                parent_path = cache / "parent.pt"
+                output = cache / "candidate.pt"
+                torch.save(parent, parent_path)
+                metrics = {
+                    "mae": 0.1, "activeMae": 0.1, "fusedVisibilityF1": 0.9,
+                    "fusedVisibilityFalsePositiveRate": 0.0,
+                    "fusedVisibilityFalseNegativeRate": 0.1,
+                    "fusedVisibilityCameraWeight": 0.8, "fusedVisibilityThreshold": 0.5,
+                    "perTarget": {name: {"activeMae": 0.1} for name in parent["targetNames"]},
+                    "perPrompt": [], "diagonalCorners": [],
+                }
+                modes_seen = []
+                datasets_seen = []
+
+                def dataset(*args, **kwargs):
+                    value = TongueFrames(*args, **kwargs)
+                    datasets_seen.append(value)
+                    return value
+
+                def evaluation(model, loader, *args):
+                    modes_seen.append(loader.dataset.input_preprocessing)
+                    return metrics
+
+                command = [
+                    "train_tongue_model.py", str(cache), "--epochs", "1", "--device", "cpu",
+                    "--architecture", "legacy-late-fusion-v1",
+                    "--initial-checkpoint", str(parent_path), "--output", str(output),
+                ]
+                if override is not None:
+                    command.extend(["--input-preprocessing", override])
+                with mock.patch.object(sys, "argv", command), \
+                        mock.patch.object(train_tongue_model, "create_model", return_value=model), \
+                        mock.patch.object(train_tongue_model, "TongueFrames", side_effect=dataset), \
+                        mock.patch.object(train_tongue_model, "evaluate", side_effect=evaluation), \
+                        mock.patch.object(train_tongue_model, "run_training_epoch", return_value=0.0), \
+                        mock.patch.object(train_tongue_model, "checkpoint_score", side_effect=[(0.1, "initial"), (0.2, "epoch")]), \
+                        mock.patch.object(train_tongue_model.torch.jit, "script"), \
+                        mock.patch("builtins.print"):
+                    self.assertEqual(train_tongue_model.main(), 0)
+                candidate = torch.load(output, weights_only=False)
+                self.assertEqual(candidate["inputPreprocessing"], expected)
+                self.assertEqual(candidate["checkpointEpoch"], 0)
+                self.assertEqual(modes_seen, [expected, expected])
+                self.assertEqual(candidate["parentCheckpoint"], "parent.pt")
+                self.assertEqual(candidate["imageSize"], 128)
+                for value in datasets_seen:
+                    for array in (value.images, value.targets, value.native):
+                        array._mmap.close()
+
     def test_split_reports_no_trainable_card_without_numpy_concatenate_error(self):
         steps = np.asarray([0, 0, 0, 1, 1, 1])
         trainable = np.asarray([True, True, True, False, False, False])

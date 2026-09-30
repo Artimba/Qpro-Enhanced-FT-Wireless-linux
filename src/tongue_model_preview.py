@@ -20,6 +20,7 @@ if torch.version.hip:
 
 from train_tongue_model import create_model
 from qpro_gpu import validated_torch_device_name
+from tongue_image_processing import preprocess_stereo_images, resolve_input_preprocessing
 
 
 TONGUE_PACKET = struct.Struct("<4sBBH12f")
@@ -205,6 +206,7 @@ class LiveTongueModelPreview:
         checkpoint = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
         self.target_names = list(checkpoint["targetNames"])
         self.image_size = int(checkpoint["imageSize"])
+        self.input_preprocessing = resolve_input_preprocessing(checkpoint)
         self.architecture = str(checkpoint.get("architecture", "legacy-late-fusion-v1"))
         self.model = create_model(self.architecture, self.target_names)
         self.model.load_state_dict(checkpoint["modelState"])
@@ -212,6 +214,7 @@ class LiveTongueModelPreview:
         self.direction_checkpoint_path: Path | None = None
         self.direction_model = None
         self.direction_image_size = self.image_size
+        self.direction_input_preprocessing = self.input_preprocessing
         if direction_checkpoint_path:
             self.direction_checkpoint_path = Path(direction_checkpoint_path).resolve()
             direction_checkpoint = torch.load(
@@ -226,6 +229,9 @@ class LiveTongueModelPreview:
                 direction_checkpoint.get("architecture", "legacy-late-fusion-v1")
             )
             self.direction_image_size = int(direction_checkpoint["imageSize"])
+            self.direction_input_preprocessing = resolve_input_preprocessing(
+                direction_checkpoint
+            )
             self.direction_model = create_model(
                 direction_architecture, self.target_names
             )
@@ -243,14 +249,20 @@ class LiveTongueModelPreview:
         self._smoothed: np.ndarray | None = None
         self._visibility_hold = TongueVisibilityHold()
 
-    def _inputs(self, strip: np.ndarray, image_size: int) -> torch.Tensor:
-        cameras = np.empty((1, 2, image_size, image_size), dtype=np.float32)
+    def _inputs(
+        self, strip: np.ndarray, image_size: int, preprocessing: str = "raw-v1"
+    ) -> torch.Tensor:
+        cameras = np.empty((2, image_size, image_size), dtype=np.uint8)
         for view in range(2):
             panel = strip[:, view * 400:(view + 1) * 400]
-            cameras[0, view] = cv2.resize(
+            cameras[view] = cv2.resize(
                 panel, (image_size, image_size), interpolation=cv2.INTER_AREA
-            ).astype(np.float32) / 255.0
-        return torch.from_numpy(cameras).to(self.device)
+            )
+        # Match the cache/trainer order. Contrast is part of the checkpoint's
+        # input contract, so legacy weights continue to receive raw pixels.
+        cameras = preprocess_stereo_images(cameras, preprocessing)
+        normalized = cameras.astype(np.float32)[None] / 255.0
+        return torch.from_numpy(normalized).to(self.device)
 
     def predict(
         self,
@@ -263,7 +275,7 @@ class LiveTongueModelPreview:
                 "Tongue preview requires cameras 2 and 3 in a 400x800 mouth "
                 f"or 400x1200 face strip, got {strip.shape}"
             )
-        inputs = self._inputs(strip, self.image_size)
+        inputs = self._inputs(strip, self.image_size, self.input_preprocessing)
         if self.device.type == "cuda":
             torch.cuda.synchronize(self.device)
         started = time.perf_counter()
@@ -273,7 +285,16 @@ class LiveTongueModelPreview:
                 gate_visibility = float(
                     values[self.target_names.index("visibility")]
                 )
-                direction_inputs = self._inputs(strip, self.direction_image_size)
+                if (
+                    self.direction_image_size == self.image_size
+                    and self.direction_input_preprocessing == self.input_preprocessing
+                ):
+                    direction_inputs = inputs
+                else:
+                    direction_inputs = self._inputs(
+                        strip, self.direction_image_size,
+                        self.direction_input_preprocessing,
+                    )
                 direction_values = (
                     self.direction_model(direction_inputs)[0].float().cpu().numpy()
                 )

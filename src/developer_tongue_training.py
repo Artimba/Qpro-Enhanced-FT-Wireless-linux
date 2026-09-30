@@ -29,6 +29,9 @@ from prepare_tongue_training import FACE_HEIGHT
 from qpro_gpu import validated_torch_device_name
 from tongue_calibration import TONGUE_TARGET_NAMES
 from tongue_still_capture import TONGUE_ARC_PROMPTS, TONGUE_STILL_PROMPTS
+from tongue_image_processing import (
+    MODES, preprocess_stereo_images, resolve_input_preprocessing,
+)
 from train_tongue_model import SIGNED_TARGETS, create_model
 
 
@@ -84,6 +87,22 @@ def _arrays(cache: Path) -> dict[str, np.ndarray]:
         name: np.load(cache / f"{name}.npy", mmap_mode="r", allow_pickle=False)
         for name in ARRAY_NAMES
     }
+
+
+def _read_raw_stereo(
+    capture, entries: list[tuple[int, int]], frame_width: int,
+    indices: np.ndarray,
+) -> np.ndarray:
+    images = np.empty((len(indices), 2, FACE_HEIGHT, 400), dtype=np.uint8)
+    for destination, index in enumerate(indices):
+        capture.seek(entries[int(index)][0])
+        raw = capture.read(frame_width * FACE_HEIGHT)
+        if len(raw) != frame_width * FACE_HEIGHT:
+            raise ValueError(f"Raw still {int(index)} is truncated")
+        strip = np.frombuffer(raw, dtype=np.uint8).reshape(FACE_HEIGHT, frame_width)
+        images[destination, 0] = strip[:, :400]
+        images[destination, 1] = strip[:, 400:800]
+    return images
 
 
 def _verify_source_frames(
@@ -309,6 +328,7 @@ class ModelPair:
         self.models = []
         self.architectures = []
         self.image_sizes = []
+        self.input_preprocessing = []
         checkpoints = []
         for path in (gate_path, direction_path):
             checkpoint = torch.load(path, map_location="cpu", weights_only=False)
@@ -319,11 +339,13 @@ class ModelPair:
             if not 128 <= size <= 320:
                 raise ValueError(f"Checkpoint image size is invalid: {path}")
             architecture = str(checkpoint.get("architecture", "legacy-late-fusion-v1"))
+            input_preprocessing = resolve_input_preprocessing(checkpoint)
             model = create_model(architecture, names)
             model.load_state_dict(checkpoint["modelState"])
             self.models.append((model.to(device).eval(), size))
             self.architectures.append(architecture)
             self.image_sizes.append(size)
+            self.input_preprocessing.append(input_preprocessing)
             checkpoints.append(checkpoint)
         gate = checkpoints[0].get("visibilityGate", {})
         self.camera_weight = float(gate.get("cameraWeight", 0.5))
@@ -331,15 +353,34 @@ class ModelPair:
         if not 0.0 <= self.camera_weight <= 1.0 or not 0.0 < self.threshold < 1.0:
             raise ValueError("The gate checkpoint has invalid frozen visibility settings")
 
-    def predict(self, images: np.ndarray) -> np.ndarray:
+    def predict(
+        self, images: np.ndarray, raw_images: np.ndarray | None = None,
+    ) -> np.ndarray:
+        if any(mode != "raw-v1" for mode in self.input_preprocessing):
+            if (raw_images is None or raw_images.dtype != np.uint8
+                    or raw_images.shape != (len(images), 2, FACE_HEIGHT, 400)):
+                raise ValueError("Contrast evaluation needs the original uint8 400px stereo panes")
         inputs = torch.from_numpy(np.asarray(images, dtype=np.float32) / 255.0).to(self.device)
         outputs = []
         with torch.inference_mode():
-            for model, size in self.models:
-                resized = (
-                    inputs if inputs.shape[-1] == size
-                    else F.interpolate(inputs, size=(size, size), mode="area")
-                )
+            for (model, size), mode in zip(self.models, self.input_preprocessing):
+                if mode == "raw-v1":
+                    # Retain the baseline's original float AREA resize exactly.
+                    resized = (
+                        inputs if inputs.shape[-1] == size
+                        else F.interpolate(inputs, size=(size, size), mode="area")
+                    )
+                else:
+                    # Replay the original panes, avoiding a second resize from
+                    # a prepared cache that differs from live camera inputs.
+                    processed = np.empty((len(images), 2, size, size), dtype=np.uint8)
+                    for index, stereo in enumerate(raw_images):
+                        pixels = stereo if stereo.shape[1:] == (size, size) else np.stack([
+                            cv2.resize(view, (size, size), interpolation=cv2.INTER_AREA)
+                            for view in stereo
+                        ])
+                        processed[index] = preprocess_stereo_images(pixels, mode)
+                    resized = torch.from_numpy(processed).float().div_(255).to(self.device)
                 outputs.append(model(resized).float().cpu().numpy())
         combined = outputs[1]
         combined[:, TONGUE_TARGET_NAMES.index("visibility")] = outputs[0][:, TONGUE_TARGET_NAMES.index("visibility")]
@@ -480,12 +521,28 @@ def evaluate_pair(pair: ModelPair, sessions: list[Session], batch_size: int) -> 
     session_ids = []
     wearer_ids = []
     steps = []
+    needs_raw = any(mode != "raw-v1" for mode in pair.input_preprocessing)
     for session in sessions:
         arrays = _arrays(session.cache)
         selected = np.flatnonzero(arrays["trainable"])
-        for start in range(0, len(selected), batch_size):
-            indices = selected[start:start + batch_size]
-            predictions.append(pair.predict(arrays["images"][indices]))
+        raw_capture = None
+        try:
+            if needs_raw:
+                capture_path = _resolve(session.cache, session.metadata["capture"])
+                if _sha256(capture_path) != session.capture_sha256:
+                    raise ValueError("Raw evaluation capture changed after provenance verification")
+                entries, frame_width = scan_stereo_mouth_stills(capture_path)
+                raw_capture = capture_path.open("rb", buffering=4 * 1024 * 1024)
+            for start in range(0, len(selected), batch_size):
+                indices = selected[start:start + batch_size]
+                raw_images = (
+                    _read_raw_stereo(raw_capture, entries, frame_width, indices)
+                    if raw_capture is not None else None
+                )
+                predictions.append(pair.predict(arrays["images"][indices], raw_images))
+        finally:
+            if raw_capture is not None:
+                raw_capture.close()
         targets.append(np.asarray(arrays["targets"][selected]))
         natives.append(np.asarray(arrays["native_tongue_out"][selected]))
         steps.append(np.asarray(arrays["step_ids"][selected]))
@@ -526,12 +583,53 @@ def resize_training_cache(source: Path, destination: Path, size: int) -> None:
     (destination / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
+def rebuild_training_cache_from_raw(source: Path, destination: Path, size: int) -> None:
+    """Derive unenhanced branch inputs directly from verified original panes.
+
+    This only prepares a private cache. Consent and manual review are still
+    required by the caller before model training; release gates are unchanged.
+    """
+    if not 128 <= size <= 320:
+        raise ValueError("Branch image size must be between 128 and 320")
+    metadata, _prompts, _count, _hashes = _check_cache(source)
+    capture_path = _resolve(source, metadata["capture"])
+    entries, frame_width = scan_stereo_mouth_stills(capture_path)
+    destination.mkdir(parents=True, exist_ok=False)
+    output = np.lib.format.open_memmap(
+        destination / "images.npy", mode="w+", dtype=np.uint8,
+        shape=(len(entries), 2, size, size),
+    )
+    try:
+        with capture_path.open("rb", buffering=4 * 1024 * 1024) as capture:
+            for start in range(0, len(entries), 16):
+                indices = np.arange(start, min(start + 16, len(entries)))
+                raw = _read_raw_stereo(capture, entries, frame_width, indices)
+                for index, stereo in zip(indices, raw):
+                    for view in range(2):
+                        output[index, view] = cv2.resize(
+                            stereo[view], (size, size), interpolation=cv2.INTER_AREA,
+                        )
+        output.flush()
+    finally:
+        output._mmap.close()
+    for name in ARRAY_NAMES:
+        if name != "images":
+            shutil.copy2(source / f"{name}.npy", destination / f"{name}.npy")
+    for key in ("capture", "labels", "session"):
+        metadata[key] = str(_resolve(source, metadata[key]))
+    metadata["imageSize"] = size
+    metadata["derivedFor"] = "direct original stereo panes at the branch resolution"
+    metadata["inputSampling"] = "raw-capture-direct-area"
+    (destination / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+
 def refinement_command(
     script: Path, cache: Path, initial_checkpoint: Path, output: Path,
     architecture: str, focus: str, epochs: int, batch_size: int, device: str,
+    input_preprocessing: str | None = None,
 ) -> list[str]:
     """Fine tune a copy of one compatible v8 checkpoint, preserving its file."""
-    return [
+    command = [
         sys.executable, str(script), str(cache),
         "--initial-checkpoint", str(initial_checkpoint),
         "--architecture", architecture,
@@ -540,6 +638,10 @@ def refinement_command(
         "--epochs", str(epochs), "--batch-size", str(batch_size),
         "--device", device, "--output", str(output),
     ]
+    if input_preprocessing is not None:
+        mode = resolve_input_preprocessing({"inputPreprocessing": input_preprocessing})
+        command.extend(["--input-preprocessing", mode])
+    return command
 
 
 def validate_public_checkpoint_metadata(path: Path) -> None:
@@ -598,6 +700,10 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=24)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--input-preprocessing", choices=MODES,
+        help="optionally change candidate processing; otherwise each branch inherits its parent",
+    )
     parser.add_argument("--stage", action="store_true", help="copy a passing pair to a candidate staging folder")
     args = parser.parse_args()
     if args.epochs < 1 or args.batch_size < 1:
@@ -606,6 +712,8 @@ def main() -> int:
         parser.error("provide both candidate checkpoint paths or neither")
     if args.stage and args.candidate_gate:
         parser.error("external candidate checkpoints may be audited but cannot be staged without training provenance")
+    if args.input_preprocessing and args.candidate_gate:
+        parser.error("external candidates use their saved input processing and cannot be overridden")
     sessions = load_manifest(args.manifest.resolve(strict=True))
     train = [item for item in sessions if item.role == "train"]
     holdout = [item for item in sessions if item.role == "holdout"]
@@ -627,6 +735,7 @@ def main() -> int:
     baseline_pair = ModelPair(baseline_gate, baseline_direction, torch.device("cpu"))
     architectures = tuple(baseline_pair.architectures)
     baseline_sizes = tuple(baseline_pair.image_sizes)
+    baseline_preprocessing = tuple(baseline_pair.input_preprocessing)
     del baseline_pair
     output = args.output_dir.resolve()
     fresh_output_dir(output)
@@ -653,12 +762,26 @@ def main() -> int:
             branch_index = 0 if focus == "visibility" else 1
             architecture = architectures[branch_index]
             branch_cache = train_cache
-            if baseline_sizes[branch_index] != int(train[0].metadata["imageSize"]):
+            mode = args.input_preprocessing or baseline_preprocessing[branch_index]
+            if mode != "raw-v1":
+                direct_caches = []
+                for index, session in enumerate(train):
+                    direct = output / f"{focus}-raw-session-{index}"
+                    rebuild_training_cache_from_raw(session.cache, direct, baseline_sizes[branch_index])
+                    direct_caches.append(direct)
+                branch_cache = direct_caches[0]
+                if len(direct_caches) > 1:
+                    branch_cache = output / f"{focus}-training-cache"
+                    _run([sys.executable, str(script_dir / "merge_manual_tongue_caches.py"),
+                          *(str(cache) for cache in direct_caches), "--output", str(branch_cache),
+                          "--size", str(baseline_sizes[branch_index])])
+            elif baseline_sizes[branch_index] != int(train[0].metadata["imageSize"]):
                 branch_cache = output / f"{focus}-training-cache"
                 resize_training_cache(train_cache, branch_cache, baseline_sizes[branch_index])
             _run(refinement_command(
                 script_dir / "train_tongue_model.py", branch_cache, source, checkpoint,
                 architecture, focus, args.epochs, args.batch_size, args.device,
+                args.input_preprocessing,
             ))
     validate_public_checkpoint_metadata(candidate_gate)
     validate_public_checkpoint_metadata(candidate_direction)
@@ -677,8 +800,9 @@ def main() -> int:
     device = torch.device(validated_torch_device_name(torch, args.device))
     baseline = evaluate_pair(ModelPair(baseline_gate, baseline_direction, device),
                              holdout, args.batch_size)
-    candidate = evaluate_pair(ModelPair(candidate_gate, candidate_direction, device),
-                              holdout, args.batch_size)
+    candidate_pair = ModelPair(candidate_gate, candidate_direction, device)
+    candidate_preprocessing = tuple(candidate_pair.input_preprocessing)
+    candidate = evaluate_pair(candidate_pair, holdout, args.batch_size)
     problems = coverage_problems + promotion_gate(
         baseline, candidate, {item.wearer_id for item in train},
         {item.wearer_id for item in holdout},
@@ -707,6 +831,19 @@ def main() -> int:
             "baselineDirection": baseline_hashes[1],
             "candidateGate": _sha256(candidate_gate),
             "candidateDirection": _sha256(candidate_direction),
+        },
+        "inputPreprocessing": {
+            "baselineGate": baseline_preprocessing[0],
+            "baselineDirection": baseline_preprocessing[1],
+            "candidateGate": candidate_preprocessing[0],
+            "candidateDirection": candidate_preprocessing[1],
+        },
+        "inputSampling": {
+            name: "raw-capture-direct-area" if mode != "raw-v1" else "prepared-cache-float-area"
+            for name, mode in zip(
+                ("baselineGate", "baselineDirection", "candidateGate", "candidateDirection"),
+                (*baseline_preprocessing, *candidate_preprocessing),
+            )
         },
         "fineTunedEpochs": (
             {"gate": trained_epochs[0], "direction": trained_epochs[1]}

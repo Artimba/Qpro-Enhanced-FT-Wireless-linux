@@ -22,6 +22,9 @@ from tongue_visibility_calibration import (
     choose_visibility_gate, classification_at_threshold, f1_at_threshold,
 )
 from qpro_gpu import validated_torch_device_name
+from tongue_image_processing import (
+    MODES, preprocess_stereo_images, resolve_input_preprocessing,
+)
 
 
 SIGNED_TARGETS = {"horizontal", "vertical", "twist"}
@@ -57,19 +60,26 @@ def shade_local_mouth_area(
 
 
 class TongueFrames(Dataset):
-    def __init__(self, cache: Path, indices: np.ndarray, augment: bool) -> None:
+    def __init__(
+        self, cache: Path, indices: np.ndarray, augment: bool,
+        input_preprocessing: str = "raw-v1",
+    ) -> None:
         self.images = np.load(cache / "images.npy", mmap_mode="r")
         self.targets = np.load(cache / "targets.npy", mmap_mode="r")
         self.native = np.load(cache / "native_tongue_out.npy", mmap_mode="r")
         self.indices = np.asarray(indices, dtype=np.int64)
         self.augment = augment
+        self.input_preprocessing = resolve_input_preprocessing(
+            {"inputPreprocessing": input_preprocessing}
+        )
 
     def __len__(self) -> int:
         return len(self.indices)
 
     def __getitem__(self, item: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         index = int(self.indices[item])
-        images = torch.from_numpy(np.array(self.images[index], copy=True)).float().div_(255)
+        pixels = preprocess_stereo_images(self.images[index], self.input_preprocessing)
+        images = torch.from_numpy(np.array(pixels, copy=True)).float().div_(255)
         if self.augment:
             contrast = random.uniform(0.88, 1.12)
             brightness = random.uniform(-0.05, 0.05)
@@ -575,6 +585,10 @@ def main() -> int:
         help="start from an existing compatible checkpoint for personal refinement",
     )
     parser.add_argument(
+        "--input-preprocessing", choices=MODES,
+        help="inherit the initial checkpoint's input processing by default; new models use raw-v1",
+    )
+    parser.add_argument(
         "--architecture",
         choices=("legacy-late-fusion-v1", "spatial-stereo-resnet-v2"),
         default="spatial-stereo-resnet-v2",
@@ -596,6 +610,17 @@ def main() -> int:
     cache = Path(arguments.cache).resolve()
     metadata = json.loads((cache / "metadata.json").read_text(encoding="utf-8"))
     target_names = list(metadata["targetNames"])
+    initial = None
+    if arguments.initial_checkpoint:
+        initial_path = Path(arguments.initial_checkpoint).resolve()
+        initial = torch.load(initial_path, map_location="cpu", weights_only=False)
+        if list(initial["targetNames"]) != target_names:
+            raise ValueError("Initial checkpoint target schema does not match the dataset")
+        if str(initial.get("architecture")) != arguments.architecture:
+            raise ValueError("Initial checkpoint architecture does not match the requested model")
+    inherited_preprocessing = resolve_input_preprocessing(initial or {})
+    input_preprocessing = arguments.input_preprocessing or inherited_preprocessing
+    print(f"TRAIN_INPUT_PREPROCESSING mode={input_preprocessing}", flush=True)
     step_ids = np.load(cache / "step_ids.npy", mmap_mode="r")
     trainable = np.load(cache / "trainable.npy", mmap_mode="r")
     dataset_type = str(metadata.get("datasetType", "prompted-video"))
@@ -606,8 +631,10 @@ def main() -> int:
         raise ValueError("Dataset does not contain enough repeated samples for a train/validation split")
     validation_step_ids = np.asarray(step_ids[validation_indices], dtype=np.int64)
     weights = balanced_step_weights(step_ids, train_indices)
-    train_data = TongueFrames(cache, train_indices, augment=True)
-    validation_data = TongueFrames(cache, validation_indices, augment=False)
+    train_data = TongueFrames(cache, train_indices, augment=True,
+                              input_preprocessing=input_preprocessing)
+    validation_data = TongueFrames(cache, validation_indices, augment=False,
+                                   input_preprocessing=input_preprocessing)
     sampler = WeightedRandomSampler(
         torch.as_tensor(weights, dtype=torch.double),
         num_samples=len(train_indices),
@@ -633,13 +660,7 @@ def main() -> int:
         pin_memory=device.type == "cuda",
     )
     model = create_model(arguments.architecture, target_names).to(device)
-    if arguments.initial_checkpoint:
-        initial_path = Path(arguments.initial_checkpoint).resolve()
-        initial = torch.load(initial_path, map_location="cpu", weights_only=False)
-        if list(initial["targetNames"]) != target_names:
-            raise ValueError("Initial checkpoint target schema does not match the dataset")
-        if str(initial.get("architecture")) != arguments.architecture:
-            raise ValueError("Initial checkpoint architecture does not match the requested model")
+    if initial is not None:
         model.load_state_dict(initial["modelState"])
         print(f"Refining from: {initial_path}")
     output = Path(arguments.output).resolve()
@@ -658,6 +679,7 @@ def main() -> int:
                 "modelState": model.state_dict(),
                 "targetNames": target_names,
                 "imageSize": metadata["imageSize"],
+                "inputPreprocessing": input_preprocessing,
                 "validation": metrics,
                 "split": (
                     "last 20 percent of manual repetitions within each prompt"
@@ -683,6 +705,8 @@ def main() -> int:
     if arguments.initial_checkpoint:
         # A short personal refinement can be worse than its starting model.
         # Keep the original weights when no epoch improves held-out poses.
+        # An explicit processing change compares epochs under the new input
+        # contract; developer promotion separately audits the original parent.
         baseline_metrics = evaluate(
             model, validation_loader, device, target_names, validation_step_ids
         )

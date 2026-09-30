@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
 
+import cv2
 import numpy as np
 import torch
 
@@ -13,11 +14,12 @@ from capture_format import CaptureWriter, TRANSPORT_HEADER
 from developer_tongue_training import (
     ModelPair, _complete_curriculum, curriculum_issues, evaluate_pair,
     fresh_output_dir, load_manifest, promotion_gate, refinement_command,
-    resize_training_cache, summarize, validate_public_checkpoint_metadata,
+    rebuild_training_cache_from_raw, resize_training_cache, summarize, validate_public_checkpoint_metadata,
     validate_refinement_parent,
 )
 from tongue_calibration import TONGUE_TARGET_NAMES
 from tongue_still_capture import TONGUE_ARC_PROMPTS, TONGUE_STILL_PROMPTS
+from tongue_image_processing import preprocess_stereo_images
 from train_tongue_model import StereoTongueModel, parent_checkpoint_metadata
 
 
@@ -242,6 +244,159 @@ class DeveloperTongueTrainingTests(unittest.TestCase):
         self.assertEqual(command[command.index("--learning-rate") + 1], "0.00005")
         self.assertEqual(command[command.index("--output") + 1], str(output))
         self.assertNotEqual(source, output)
+        self.assertNotIn("--input-preprocessing", command)
+        contrast = refinement_command(
+            script, Path("training-cache"), source, output,
+            "legacy-late-fusion-v1", "direction", 12, 16, "cpu", "clahe-v1",
+        )
+        self.assertEqual(contrast[contrast.index("--input-preprocessing") + 1], "clahe-v1")
+
+    def test_each_evaluation_branch_honors_its_saved_processing_and_size(self):
+        import developer_tongue_training
+
+        class RecordingModel(torch.nn.Module):
+            def forward(self, inputs):
+                self.last_inputs = inputs.clone()
+                return torch.zeros(len(inputs), len(TONGUE_TARGET_NAMES))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common = {"targetNames": list(TONGUE_TARGET_NAMES), "modelState": {},
+                      "architecture": "legacy-late-fusion-v1"}
+            gate = root / "gate.pt"
+            direction = root / "direction.pt"
+            torch.save({**common, "imageSize": 128, "inputPreprocessing": "clahe-v1"}, gate)
+            torch.save({**common, "imageSize": 192}, direction)
+            gate_model, direction_model = RecordingModel(), RecordingModel()
+            with mock.patch.object(developer_tongue_training, "create_model",
+                                   side_effect=[gate_model, direction_model]):
+                pair = ModelPair(gate, direction, torch.device("cpu"))
+            pixels = np.tile((np.arange(400) % 256).astype(np.uint8), (400, 1))
+            raw_images = np.stack([np.stack([pixels, pixels.T])])
+            images = np.stack([np.stack([
+                cv2.resize(view, (224, 224), interpolation=cv2.INTER_AREA)
+                for view in raw_images[0]
+            ])])
+            original = images.copy()
+            with self.assertRaisesRegex(ValueError, "original uint8 400px"):
+                pair.predict(images)
+            pair.predict(images, raw_images)
+            resized_pixels = np.stack([
+                cv2.resize(view, (128, 128), interpolation=cv2.INTER_AREA)
+                for view in raw_images[0]
+            ])
+            expected_gate = torch.from_numpy(
+                preprocess_stereo_images(resized_pixels, "clahe-v1")[None]
+            ).float().div_(255)
+            raw = torch.from_numpy(np.asarray(images, dtype=np.float32) / 255.0)
+            expected_direction = torch.nn.functional.interpolate(raw, size=(192, 192), mode="area")
+            self.assertTrue(torch.equal(gate_model.last_inputs, expected_gate))
+            self.assertTrue(torch.equal(direction_model.last_inputs, expected_direction))
+            self.assertEqual(pair.input_preprocessing, ["clahe-v1", "raw-v1"])
+            self.assertEqual(pair.image_sizes, [128, 192])
+            np.testing.assert_array_equal(images, original)
+            torch.save({**common, "imageSize": 128, "inputPreprocessing": "unknown"}, gate)
+            with self.assertRaisesRegex(ValueError, "preprocessing"):
+                ModelPair(gate, direction, torch.device("cpu"))
+
+    def test_contrast_branch_cache_and_evaluation_resize_original_panes_once(self):
+        import developer_tongue_training
+
+        class RecordingModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.inputs = []
+
+            def forward(self, inputs):
+                self.inputs.append(inputs.clone())
+                return torch.zeros(len(inputs), len(TONGUE_TARGET_NAMES))
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            train = self.make_cache(root, "train")
+            holdout = self.make_cache(root, "holdout")
+            metadata_path = holdout / "metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            raw_images = np.random.default_rng(81).integers(
+                0, 256, (8, 2, 400, 400), dtype=np.uint8,
+            )
+            Path(metadata["capture"]).unlink()
+            writer = CaptureWriter(Path(metadata["capture"]))
+            timestamps = np.load(holdout / "timestamps.npy")
+            try:
+                for index, stereo in enumerate(raw_images):
+                    payload = np.concatenate(stereo, axis=1).tobytes()
+                    header = TRANSPORT_HEADER.pack(
+                        b"QPLIVE3\0", 3, TRANSPORT_HEADER.size, index + 1, 2,
+                        800, 400, 800, 1, len(payload), 0x0C, 0,
+                    )
+                    writer.write(header, payload, int(timestamps[index]), int(timestamps[index]))
+            finally:
+                writer.close(completed=True)
+            prepared = np.stack([np.stack([
+                cv2.resize(view, (224, 224), interpolation=cv2.INTER_AREA)
+                for view in stereo
+            ]) for stereo in raw_images])
+            np.save(holdout / "images.npy", prepared)
+            metadata["imageSize"] = 224
+            metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            # Both sessions have the same prepared resolution for the manifest.
+            train_metadata_path = train / "metadata.json"
+            train_metadata = json.loads(train_metadata_path.read_text())
+            train_metadata["imageSize"] = 224
+            train_metadata_path.write_text(json.dumps(train_metadata), encoding="utf-8")
+            train_pixels = np.load(train / "images.npy")[:, :, 0, 0]
+            np.save(train / "images.npy", np.broadcast_to(
+                train_pixels[:, :, None, None], (8, 2, 224, 224),
+            ).copy())
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({
+                "schemaVersion": 1, "purpose": "developer-tongue-model", "sessions": [
+                    {"cache": str(train), "role": "train", "sessionId": "t", "wearerId": "a",
+                     "consent": {"training": True, "redistributeCheckpoint": True, "manualPoseReview": True}},
+                    {"cache": str(holdout), "role": "holdout", "sessionId": "h", "wearerId": "b",
+                     "consent": {"evaluation": True, "manualPoseReview": True}},
+                ],
+            }), encoding="utf-8")
+            sessions = load_manifest(manifest)
+            direct = root / "direction-cache"
+            rebuild_training_cache_from_raw(holdout, direct, 192)
+            branch = np.load(direct / "images.npy")
+            expected = np.stack([np.stack([
+                cv2.resize(view, (192, 192), interpolation=cv2.INTER_AREA)
+                for view in stereo
+            ]) for stereo in raw_images])
+            np.testing.assert_array_equal(branch, expected)
+            np.testing.assert_array_equal(np.load(holdout / "images.npy"), prepared)
+            doubled = np.stack([np.stack([
+                cv2.resize(view, (192, 192), interpolation=cv2.INTER_AREA)
+                for view in stereo
+            ]) for stereo in prepared])
+            self.assertFalse(np.array_equal(branch, doubled))
+            derived = json.loads((direct / "metadata.json").read_text())
+            self.assertEqual(derived["inputSampling"], "raw-capture-direct-area")
+            self.assertEqual(derived["imageSize"], 192)
+            common = {"targetNames": list(TONGUE_TARGET_NAMES), "modelState": {},
+                      "architecture": "legacy-late-fusion-v1", "imageSize": 192,
+                      "inputPreprocessing": "clahe-v1"}
+            gate, direction = root / "gate.pt", root / "direction.pt"
+            torch.save(common, gate)
+            torch.save(common, direction)
+            gate_model, direction_model = RecordingModel(), RecordingModel()
+            with mock.patch.object(developer_tongue_training, "create_model",
+                                   side_effect=[gate_model, direction_model]):
+                pair = ModelPair(gate, direction, torch.device("cpu"))
+            report = evaluate_pair(pair, [sessions[1]], 3)
+            self.assertEqual(report["samples"], 8)
+            expected_input = torch.from_numpy(np.stack([
+                preprocess_stereo_images(stereo, "clahe-v1") for stereo in expected
+            ])).float().div_(255)
+            self.assertTrue(torch.equal(torch.cat(direction_model.inputs), expected_input))
+            # Altering the original capture after review must fail closed.
+            with Path(metadata["capture"]).open("ab") as capture:
+                capture.write(b"changed")
+            with self.assertRaisesRegex(ValueError, "changed after provenance"):
+                evaluate_pair(pair, [sessions[1]], 3)
 
     def test_direction_training_cache_keeps_parent_input_size(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -302,6 +457,16 @@ class DeveloperTongueTrainingTests(unittest.TestCase):
         with mock.patch.object(sys, "argv", [
             "developer_tongue_training.py", "manifest.json", "--candidate-gate", "gate.pt",
             "--candidate-direction", "direction.pt", "--stage",
+        ]):
+            with self.assertRaises(SystemExit) as stopped:
+                developer_tongue_training.main()
+        self.assertEqual(stopped.exception.code, 2)
+
+    def test_external_candidate_processing_cannot_be_overridden(self):
+        import developer_tongue_training
+        with mock.patch.object(sys, "argv", [
+            "developer_tongue_training.py", "manifest.json", "--candidate-gate", "gate.pt",
+            "--candidate-direction", "direction.pt", "--input-preprocessing", "clahe-v1",
         ]):
             with self.assertRaises(SystemExit) as stopped:
                 developer_tongue_training.main()

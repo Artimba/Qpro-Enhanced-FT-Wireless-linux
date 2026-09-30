@@ -66,6 +66,7 @@ $sourceFiles = @(
     "tongue_still_capture.py",
     "label_capture.py",
     "tongue_model_preview.py",
+    "tongue_image_processing.py",
     "train_tongue_model.py",
     "developer_tongue_training.py",
     "tongue_visibility_calibration.py",
