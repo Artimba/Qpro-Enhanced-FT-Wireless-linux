@@ -74,6 +74,9 @@ public sealed class TrackingModule : ExtTrackingModule
     private UdpClient? _tongueSocket;
     private UdpClient? _pupilSocket;
     private UdpClient? _steamLabelSocket;
+    private UdpClient? _cheekTelemetrySocket;
+    private static readonly IPEndPoint CheekTelemetryEndpoint = new(IPAddress.Loopback, CheekPuffTelemetry.Port);
+    private long _nextCheekTelemetryTick;
     private SteamOscSource? _steamSource;
     private bool _useSteamLink;
     private long _nextSteamLabelTick;
@@ -87,6 +90,8 @@ public sealed class TrackingModule : ExtTrackingModule
     private bool _needsExpression;
     private CheekPuffMode _cheekPuffMode = CheekPuffMode.Strong;
     private readonly CheekPuffTracker _cheekPuffTracker = new();
+    private CheekPuffCalibration? _cheekPuffCalibration;
+    private string? _cheekPuffCalibrationOrigin;
     private long _nextCheekPuffModeCheckTick;
     private CheekSuckMode _cheekSuckMode = CheekSuckMode.Strong;
     private readonly CheekSuckTracker _cheekSuckTracker = new();
@@ -120,6 +125,10 @@ public sealed class TrackingModule : ExtTrackingModule
         _needsEye = eyeAvailable;
         _needsExpression = expressionAvailable;
         _useSteamLink = ReadSteamLinkSelection();
+        _cheekPuffTracker.Reset();
+        _nextCheekPuffModeCheckTick = 0;
+        _cheekPuffCalibration = null;
+        _cheekPuffCalibrationOrigin = null;
         ModuleInformation = new ModuleMetadata
         {
             Name = _useSteamLink
@@ -179,6 +188,15 @@ public sealed class TrackingModule : ExtTrackingModule
 
         if (!_useSteamLink)
             TryOpenMap();
+        try
+        {
+            _cheekTelemetrySocket = new UdpClient(AddressFamily.InterNetwork);
+        }
+        catch (SocketException error)
+        {
+            Logger.LogWarning(error, "Cheek calibration preview could not open its local output socket.");
+        }
+        _nextCheekTelemetryTick = 0;
         Logger.LogInformation(
             "Quest Pro combined bridge initialized: source={Source}, eye={Eye}, face={Face}; Qpro gaze freshness={Timeout} ms",
             _useSteamLink ? "Steam Link OSC 9015" : "Virtual Desktop", _needsEye,
@@ -207,6 +225,9 @@ public sealed class TrackingModule : ExtTrackingModule
         for (int index = 0; index < ExpressionCount; ++index)
             expressions[index] = BitConverter.ToSingle(_second, ExpressionOffset + index * 4);
 
+        if (_second[1] != 0)
+            PublishCheekCalibrationSample(expressions, NativeFaceSource.VirtualDesktop, Environment.TickCount64);
+
         if (_needsEye)
             UpdateEyes(expressions);
         if ((_needsEye || _needsExpression) && _second[1] != 0)
@@ -219,6 +240,7 @@ public sealed class TrackingModule : ExtTrackingModule
     public override void Teardown()
     {
         _smirkTracker.Reset();
+        _cheekPuffTracker.Reset();
         _gazeSocket?.Dispose();
         _gazeSocket = null;
         _tongueSocket?.Dispose();
@@ -229,6 +251,8 @@ public sealed class TrackingModule : ExtTrackingModule
         _steamSource = null;
         _steamLabelSocket?.Dispose();
         _steamLabelSocket = null;
+        _cheekTelemetrySocket?.Dispose();
+        _cheekTelemetrySocket = null;
         _view?.Dispose();
         _view = null;
         _map?.Dispose();
@@ -301,6 +325,8 @@ public sealed class TrackingModule : ExtTrackingModule
         neutral.Clear();
         ReadOnlySpan<float> upperValues = upperFaceAvailable ? expressions : neutral;
         ReadOnlySpan<float> lowerValues = lowerFaceAvailable ? expressions : neutral;
+        if (lowerFaceAvailable)
+            PublishCheekCalibrationSample(expressions, NativeFaceSource.SteamLink, now);
         if (_needsEye)
             UpdateSteamEyes(upperValues, now);
         if (_needsEye || _needsExpression)
@@ -633,9 +659,10 @@ public sealed class TrackingModule : ExtTrackingModule
         Set((int)UnifiedExpressions.MouthCornerSlantRight, smile.Right);
 
         // Both sources use the same left/right XR_FB cheek indices. The Hub
-        // selects native passthrough, balanced separation, or strong separation.
+        // selects native passthrough, calibrated strength, balanced separation,
+        // or a confirmed 1/0 pose.
         RefreshCheekPuffMode();
-        CheekPuffWeights cheeks = _cheekPuffTracker.Update(values, _cheekPuffMode, frameTickMs);
+        CheekPuffWeights cheeks = _cheekPuffTracker.Update(values, _cheekPuffMode, frameTickMs, _cheekPuffCalibration);
         Set((int)UnifiedExpressions.CheekPuffLeft, cheeks.Left);
         Set((int)UnifiedExpressions.CheekPuffRight, cheeks.Right);
         Set((int)UnifiedExpressions.CheekSquintLeft, values[4]);
@@ -692,20 +719,58 @@ public sealed class TrackingModule : ExtTrackingModule
             {
                 "off" => CheekPuffMode.Off,
                 "balanced" => CheekPuffMode.Balanced,
+                "calibrated" => CheekPuffMode.Calibrated,
                 _ => CheekPuffMode.Strong
             };
         }
         catch (IOException) { return; }
         catch (UnauthorizedAccessException) { return; }
-        if (_cheekPuffMode == selected) return;
+        string source = _useSteamLink
+            ? CheekPuffCalibrationProfile.SteamLinkSource
+            : CheekPuffCalibrationProfile.VirtualDesktopSource;
+        CheekPuffCalibration? calibration = selected == CheekPuffMode.Calibrated
+            ? CheekPuffCalibrationProfile.Load(source) : null;
+        string? origin = calibration.HasValue ? "personal profile" : null;
+        if (selected == CheekPuffMode.Calibrated && !calibration.HasValue)
+        {
+            calibration = DeveloperCheekPuffBaseline.ForSource(source);
+            origin = calibration.HasValue ? "developer baseline" : "balanced fallback; no profile";
+        }
+        if (_cheekPuffMode == selected && _cheekPuffCalibration == calibration &&
+            _cheekPuffCalibrationOrigin == origin) return;
         _cheekPuffMode = selected;
+        _cheekPuffCalibration = calibration;
+        _cheekPuffCalibrationOrigin = origin;
         _cheekPuffTracker.Reset();
         Logger.LogInformation("Cheek puff style: {Style}", selected switch
         {
             CheekPuffMode.Off => "native passthrough",
             CheekPuffMode.Balanced => "balanced",
-            _ => "strong individual"
+            CheekPuffMode.Calibrated => $"calibrated ({origin})",
+            _ => "1/0 individual"
         });
+    }
+
+    private void PublishCheekCalibrationSample(ReadOnlySpan<float> values, NativeFaceSource source, long nowMs)
+    {
+        if (_cheekTelemetrySocket is null || nowMs < _nextCheekTelemetryTick) return;
+        _nextCheekTelemetryTick = nowMs + 50;
+        // Calibration always measures Balanced strengths, even while another
+        // output mode is selected, so its anchors describe the same input that
+        // Calibrated mode later normalizes.
+        CheekPuffWeights cheeks = CheekPuffMapping.FromFaceWeights(values);
+        byte sourceId = source == NativeFaceSource.SteamLink
+            ? CheekPuffTelemetry.SourceSteamLink : CheekPuffTelemetry.SourceVirtualDesktop;
+        byte[] packet = CheekPuffTelemetry.Create(sourceId, cheeks.Left, cheeks.Right);
+        try
+        {
+            _cheekTelemetrySocket.Send(packet, packet.Length, CheekTelemetryEndpoint);
+        }
+        catch (SocketException)
+        {
+            // A closed calibration window must not interrupt face tracking.
+            _nextCheekTelemetryTick = nowMs + 1000;
+        }
     }
 
     private void RefreshCheekSuckMode()
