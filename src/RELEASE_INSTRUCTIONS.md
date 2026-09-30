@@ -39,12 +39,6 @@ Close VRCFaceTracking and wait for its module process to exit before switching s
 
 If you want to stream the **Virtual Desktop picture over a USB cable**, Fwooffy's working setup used the Virtual Desktop **Beta** channel. In the Meta Horizon phone app or the headset's app library, long-press Virtual Desktop, open **Settings > Release Channels**, choose **Beta**, and update it. This changes VR video streaming. The Hub's USB or wireless choice below controls **tracking data**, which is separate.
 
-### Hand and controller tracking with Virtual Desktop
-
-Virtual Desktop sends Quest hand input through its SteamVR driver; Qpro's VRCFaceTracking module handles face and eye expressions and does not control VRChat's hands. For finger tracking, enable hand tracking in Quest settings and **Avatars Use Finger Tracking** in VRChat's **Controls** menu. In Virtual Desktop, tap the two controllers together twice, set them on a flat surface, and hold your empty hands where the headset cameras can see them, as described in [VRChat's finger-tracking guide](https://wiki.vrchat.com/wiki/Finger_Tracking). This restored finger tracking in a live Quest Pro check. Picking up the controllers returns to controller input.
-
-Singularity's **Simultaneous Hands Controllers** AIO tweak alone did not make finger motion reach VRChat while controllers were held in that check. With one controller held, Virtual Desktop also returned to controller input for both hands. Mixed input needs support from the headset app and its SteamVR driver; it is not a Qpro face-tracking setting. [Singularity currently labels the tweak buggy](https://github.com/Lumince/singularity). If empty-hand tracking still shows controller gestures, first confirm the Quest and VRChat settings and repeat the double-tap switch before changing the Qpro module.
-
 ## 4. Connect your Quest to the Hub
 
 Choose **one** connection type on **First-time setup**. If this is your first time using the Hub, USB is the easiest way to check that it works. You can switch to wireless later.
