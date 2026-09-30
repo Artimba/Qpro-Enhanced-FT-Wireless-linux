@@ -228,44 +228,66 @@ internal sealed partial class HubForm
 
     private string ModelDisplayName(int version)
     {
-        var metadata = ModelMetadataPath(version);
-        if (File.Exists(metadata))
-        {
-            try
-            {
-                var name = JsonNode.Parse(File.ReadAllText(metadata))?["displayName"]?.GetValue<string>()?.Trim();
-                if (!string.IsNullOrWhiteSpace(name)) return $"{name} · v{version}";
-            }
-            catch { }
-        }
-        return version == 8 ? "Developer-trained tongue model · v8 demo" : $"Personal tongue model · v{version}";
+        var metadata = ReadModelMetadata(version);
+        var name = ModelFriendlyName(version, metadata);
+        var experimental = IsExperimentalModelMetadata(metadata) ? " · highly experimental" : string.Empty;
+        var demo = version == 8 && metadata is null ? " demo" : string.Empty;
+        return $"{name}{experimental} · v{version}{demo}";
     }
 
     private string ModelMetadataPath(int version) => Path.Combine(_root, "models", $"qpro-stereo-tongue-v{version}.metadata.json");
 
-    private void WriteModelMetadata(int version, string displayName, string? datasetPath, string origin)
+    private JsonObject? ReadModelMetadata(int version)
     {
-        string? existingDataset = null;
-        string? existingCreated = null;
-        if (File.Exists(ModelMetadataPath(version)))
+        try
         {
-            try
-            {
-                var existing = JsonNode.Parse(File.ReadAllText(ModelMetadataPath(version)))?.AsObject();
-                existingDataset = existing?["datasetSession"]?.GetValue<string>();
-                existingCreated = existing?["createdUtc"]?.GetValue<string>();
-            }
-            catch { }
+            var path = ModelMetadataPath(version);
+            return File.Exists(path) ? JsonNode.Parse(File.ReadAllText(path))?.AsObject() : null;
         }
+        catch { return null; }
+    }
+
+    private static string ModelFriendlyName(int version, JsonObject? metadata)
+    {
+        if (metadata?["displayName"] is JsonValue value && value.TryGetValue<string>(out var name) &&
+            !string.IsNullOrWhiteSpace(name))
+            return CleanDisplayName(name);
+        return HasMoustacheModelIcon(metadata) ? "Mustachio" : version == 8 ? "Developer-trained tongue model" : "Personal tongue model";
+    }
+
+    private static bool HasMoustacheModelIcon(JsonObject? metadata) =>
+        metadata?["modelKind"] is JsonValue value && value.TryGetValue<string>(out var kind) &&
+        string.Equals(kind, "mustachio-experimental", StringComparison.Ordinal);
+
+    private static bool IsExperimentalModelMetadata(JsonObject? metadata) =>
+        HasMoustacheModelIcon(metadata) ||
+        (metadata?["isExperimental"] is JsonValue value && value.TryGetValue<bool>(out var experimental) && experimental);
+
+    private bool IsExperimentalTongueModel(int version) => IsExperimentalModelMetadata(ReadModelMetadata(version));
+
+    private static void CopyModelClassification(JsonObject? source, JsonObject destination)
+    {
+        if (source?["modelKind"] is JsonValue value && value.TryGetValue<string>(out var kind) &&
+            !string.IsNullOrWhiteSpace(kind))
+            destination["modelKind"] = kind;
+        if (IsExperimentalModelMetadata(source)) destination["isExperimental"] = true;
+    }
+
+    private void WriteModelMetadata(int version, string displayName, string? datasetPath, string origin, JsonObject? classification = null)
+    {
+        var existing = ReadModelMetadata(version);
         var payload = new JsonObject
         {
             ["format"] = "qpro-tongue-model-metadata-v1",
             ["displayName"] = CleanDisplayName(displayName),
             ["version"] = version,
             ["origin"] = origin,
-            ["datasetSession"] = datasetPath is null ? existingDataset : Path.GetFileName(datasetPath),
-            ["createdUtc"] = existingCreated ?? DateTimeOffset.UtcNow.ToString("O")
+            ["datasetSession"] = datasetPath is null ? existing?["datasetSession"]?.DeepClone() : Path.GetFileName(datasetPath),
+            ["createdUtc"] = existing?["createdUtc"]?.DeepClone() ?? JsonValue.Create(DateTimeOffset.UtcNow.ToString("O"))
         };
+        // Experimental status belongs to the model, so changing its friendly
+        // name or transferring it cannot silently remove its warning.
+        CopyModelClassification(classification ?? existing, payload);
         File.WriteAllText(ModelMetadataPath(version), payload.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
     }
 
@@ -273,7 +295,7 @@ internal sealed partial class HubForm
     {
         if (_modelList.SelectedItem is not FileChoice model) { MessageBox.Show(this, "Select a tongue model first."); return; }
         var version = VersionFromPath(model.Primary);
-        var current = Regex.Replace(model.Label, $@"\s*·\s*v{version}.*$", string.Empty).Trim();
+        var current = ModelFriendlyName(version, ReadModelMetadata(version));
         var name = PromptForText("Rename tongue model", "Choose the friendly name shown in the hub. The model files remain paired and unchanged.", current);
         if (name is null) return;
         WriteModelMetadata(version, name, null, version == 8 ? "bundled developer model" : "renamed local model");
@@ -307,7 +329,7 @@ internal sealed partial class HubForm
         {
             Title = "Export tongue model",
             Filter = "Qpro tongue model (*.qptonguemodel)|*.qptonguemodel",
-            FileName = SafeFileName(Regex.Replace(model.Label, @"\s*·\s*v\d+.*$", string.Empty)) + ".qptonguemodel",
+            FileName = SafeFileName(ModelFriendlyName(version, ReadModelMetadata(version))) + ".qptonguemodel",
             AddExtension = true,
             DefaultExt = "qptonguemodel"
         };
@@ -317,10 +339,11 @@ internal sealed partial class HubForm
         var manifest = new JsonObject
         {
             ["format"] = "qpro-tongue-model-package-v1",
-            ["displayName"] = Regex.Replace(model.Label, @"\s*·\s*v\d+.*$", string.Empty).Trim(),
+            ["displayName"] = ModelFriendlyName(version, ReadModelMetadata(version)),
             ["sourceVersion"] = version,
             ["createdUtc"] = DateTimeOffset.UtcNow.ToString("O")
         };
+        CopyModelClassification(ReadModelMetadata(version), manifest);
         using (var writer = new StreamWriter(archive.CreateEntry("manifest.json").Open(), Encoding.UTF8)) writer.Write(manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
         archive.CreateEntryFromFile(model.Primary, "gate.pt", CompressionLevel.Optimal);
         archive.CreateEntryFromFile(model.Secondary!, "direction.pt", CompressionLevel.Optimal);
@@ -355,7 +378,7 @@ internal sealed partial class HubForm
             var displayName = manifest["displayName"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(dialog.FileName);
             gate.ExtractToFile(gatePath, false);
             direction.ExtractToFile(directionPath, false);
-            WriteModelMetadata(version, displayName, null, "imported package");
+            WriteModelMetadata(version, displayName, null, "imported package", manifest);
             AppendLog($"Imported “{CleanDisplayName(displayName)}” as local model v{version}.");
             ReloadProfiles();
         }

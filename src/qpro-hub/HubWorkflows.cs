@@ -53,13 +53,17 @@ internal sealed partial class HubForm
         var modelsDir = Path.Combine(_root, "models");
         if (Directory.Exists(modelsDir))
         {
-            foreach (var gate in Directory.GetFiles(modelsDir, "qpro-stereo-tongue-v*-gate.pt").OrderByDescending(VersionFromPath))
+            foreach (var gate in Directory.GetFiles(modelsDir, "qpro-stereo-tongue-v*-gate.pt")
+                         .OrderBy(path => IsExperimentalTongueModel(VersionFromPath(path)))
+                         .ThenByDescending(VersionFromPath))
             {
                 var version = VersionFromPath(gate);
                 var direction = Path.Combine(modelsDir, $"qpro-stereo-tongue-v{version}-direction.pt");
                 if (File.Exists(direction))
                 {
-                    var choice = new FileChoice(ModelDisplayName(version), gate, direction);
+                    var metadata = ReadModelMetadata(version);
+                    var choice = new FileChoice(ModelDisplayName(version), gate, direction,
+                        IsExperimentalModelMetadata(metadata), HasMoustacheModelIcon(metadata));
                     _tongueModels.Items.Add(choice);
                     _modelList.Items.Add(choice);
                 }
@@ -118,7 +122,11 @@ internal sealed partial class HubForm
     {
         var model = _tongueModels.SelectedItem as FileChoice;
         var version = model is null ? 0 : VersionFromPath(model.Primary);
-        _tongueModelNote.Text = version == 8
+        _tongueModelNote.Text = model?.HasMoustacheIcon == true
+            ? "Highly experimental: developer v8 extended with a beard/moustache capture from one wearer. Independent clean-shaven validation is pending. The developer v8 demo remains available."
+            : model?.IsExperimental == true
+                ? "Highly experimental tongue model. Independent wearer validation is pending. The developer v8 demo remains available."
+                : version == 8
             ? "Trained only on the developer. It is suitable for a first demo; quick refinement is recommended for another wearer."
             : model is null
                 ? "No complete gate/direction model pair was found."
@@ -392,6 +400,14 @@ internal sealed partial class HubForm
             return;
         }
         if (UtilityActionIsBusy()) return;
+        var refinementParent = kind == TongueDatasetKind.Full ? null : _tongueModels.SelectedItem as FileChoice;
+        var parentVersion = refinementParent is null ? 0 : VersionFromPath(refinementParent.Primary);
+        var trainingArguments = new List<string> { "-SessionPath", dataset.SessionPath };
+        if (parentVersion > 0)
+        {
+            trainingArguments.AddRange(["-BaseVersion", parentVersion.ToString()]);
+            AppendLog($"Refinement will extend the selected tongue model: {refinementParent!.Label}.");
+        }
         _datasetOperationBusy = true;
         UpdateControlState();
         try
@@ -406,7 +422,7 @@ internal sealed partial class HubForm
                     _ => "Full tongue training",
                 },
                 kind == TongueDatasetKind.Full ? "train-latest-tongue-stills.ps1" : "train-latest-tongue-refinement.ps1",
-                "-SessionPath", dataset.SessionPath);
+                trainingArguments.ToArray());
             if (!succeeded) { FinishTrainingProgress(false); return; }
             var created = TongueModelVersions().Where(version => !versionsBefore.Contains(version)).OrderDescending().FirstOrDefault();
             if (created > 0)
@@ -417,7 +433,7 @@ internal sealed partial class HubForm
                     TongueDatasetKind.Focused when dataset.LegacyDiagonalOnly => "legacy diagonal-only refinement",
                     TongueDatasetKind.Focused => "focused diagonal and facial hair refinement",
                     _ => "full personal dataset",
-                });
+                }, parentVersion > 0 ? ReadModelMetadata(parentVersion) : null);
                 AppendLog($"Model v{created} named “{dataset.DisplayName}”.");
             }
             ReloadProfiles();

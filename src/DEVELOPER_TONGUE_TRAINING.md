@@ -150,7 +150,49 @@ live validation as passed. Before bundling, replay the candidate on
 additional approved captures, inspect hidden false positives and diagonals,
 and verify live VRCFaceTracking output on volunteers with different face fit.
 
+## Optional contrast candidate
+
+For a separately evaluated candidate, add `--input-preprocessing clahe-v1` to
+the developer training command and use a fresh `--output-dir`. This applies
+bounded local contrast adjustment to each stereo view after resizing, during
+both training and inference. It can make existing low-contrast detail easier
+to distinguish; it cannot recover a tongue physically blocked by facial hair.
+It does not remove or synthesize hair or tongue pixels, and it never edits the
+raw capture or prepared cache.
+
+The checkpoint records its versioned `inputPreprocessing` tag. The default
+remains `raw-v1`; older checkpoints with no tag also use their original raw
+input pipeline. Each gate and direction checkpoint selects its own processing,
+including mixed pairs. An unknown tag is rejected rather than guessed. Do not
+add a contrast tag to existing weights: the candidate must be trained and
+evaluated with that processing.
+
+Before bundling, review the candidate against raw-v1 on independent wearers
+with beards or moustaches **and** independent clean-shaven wearers. Check both
+visible tongue poses and hidden mouth expressions for misses and false
+positives. Improved results on one bearded contributor do not establish that
+clean-shaven performance is preserved. The existing complete-session offline
+gate and live VRCFaceTracking review still apply.
+
 ## Bundling a passing candidate
+
+A separate opt-in **Mustachio · highly experimental** model may be provided
+for testing alongside v8. It extends copies of the existing developer v8
+weights with a beard/moustache capture; it is not a replacement for the
+validated developer baseline. Store it as a complete ordinary versioned
+gate/direction pair, plus matching metadata with `displayName: "Mustachio"`,
+`modelKind: "mustachio-experimental"`, and `isExperimental: true`. The Hub shows
+a moustache icon and retains the experimental warning when it is renamed,
+exported, or imported. It is selected explicitly rather than made the default.
+Training on one bearded wearer is exploratory; independent beard and
+clean-shaven validation remain required before promotion to a developer
+baseline.
+
+To refine Mustachio, select it under **Live tracking → Tongue model** before
+training a Quick or Focused dataset in **Personalize**. The resulting personal
+copy retains its experimental classification. Command-line refinement without
+an explicit base version chooses an ordinary model; Full dataset training
+does not inherit a parent checkpoint.
 
 Keep v8 as the known working release demo until the independent report passes
 and live review is complete. For the next release, choose a new version number

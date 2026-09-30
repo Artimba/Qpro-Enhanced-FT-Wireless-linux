@@ -161,7 +161,8 @@ internal static class Program
     }
 }
 
-internal sealed record FileChoice(string Label, string Primary, string? Secondary = null)
+internal sealed record FileChoice(string Label, string Primary, string? Secondary = null,
+    bool IsExperimental = false, bool HasMoustacheIcon = false)
 {
     public override string ToString() => Label;
 }

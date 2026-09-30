@@ -3,7 +3,9 @@ param(
     [ValidateRange(1, 100)]
     [int]$Epochs = 24,
     [ValidateRange(8, 256)]
-    [int]$BatchSize = 64
+    [int]$BatchSize = 64,
+    [ValidateRange(0, 2147483647)]
+    [int]$BaseVersion = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,20 +94,51 @@ try {
     }
     $capture = $latest.FullName -replace '\.qpsession\.json$', '.qpcap'
     if (-not (Test-Path -LiteralPath $capture)) { throw "Matching capture is missing: $capture" }
-    $cache = Join-Path $PSScriptRoot ("training\{0}-personal-refinement-224px" -f [System.IO.Path]::GetFileNameWithoutExtension($capture))
-    Write-Host "TRAIN_STATUS phase=preparing"
-    & $python .\prepare_tongue_stills.py $capture --session $latest.FullName --output $cache --size 224
-    if ($LASTEXITCODE -ne 0) { throw "Preparing the refinement frames failed." }
-
     $pairs = @(Get-ChildItem .\models -Filter "qpro-stereo-tongue-v*-gate.pt" -File | ForEach-Object {
         if ($_.Name -match '^qpro-stereo-tongue-v(?<v>\d+)-gate\.pt$') {
             $v = [int]$Matches.v
             $direction = Join-Path $_.DirectoryName "qpro-stereo-tongue-v$v-direction.pt"
-            if (Test-Path -LiteralPath $direction) { [pscustomobject]@{ Version=$v; Gate=$_.FullName; Direction=$direction } }
+            if (Test-Path -LiteralPath $direction) {
+                $experimental = $false
+                $metadataPath = Join-Path $_.DirectoryName "qpro-stereo-tongue-v$v.metadata.json"
+                if (Test-Path -LiteralPath $metadataPath) {
+                    $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
+                    $experimental = $metadata.isExperimental -eq $true -or $metadata.modelKind -eq 'mustachio-experimental'
+                }
+                [pscustomobject]@{ Version=$v; Gate=$_.FullName; Direction=$direction; Experimental=$experimental }
+            }
         }
     } | Sort-Object Version -Descending)
     if (-not $pairs.Count) { throw "No paired base tongue model was found." }
-    $base = $pairs[0]
+    # A bundled experiment must never silently become the automatic parent.
+    # The Hub passes its explicitly selected model, including Mustachio.
+    $base = if ($BaseVersion -gt 0) {
+        $pairs | Where-Object Version -eq $BaseVersion | Select-Object -First 1
+    } else {
+        $pairs | Where-Object { -not $_.Experimental } | Select-Object -First 1
+    }
+    if ($null -eq $base) { throw 'The selected refinement base is missing, or no ordinary base model is available.' }
+    Write-Host "Refinement base: tongue model v$($base.Version)"
+
+    $sizeOutput = @(& $python -c "import json,sys,torch; print(json.dumps([int(torch.load(p,map_location='cpu',weights_only=False)['imageSize']) for p in sys.argv[1:]]))" $base.Gate $base.Direction | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or $sizeOutput.Count -eq 0) { throw 'Could not read the selected model input sizes.' }
+    # Assign directly: Windows PowerShell 5.1 otherwise wraps a JSON array as
+    # one nested item when ConvertFrom-Json is inside an array expression.
+    $sizes = ConvertFrom-Json -InputObject $sizeOutput[0].ToString()
+    if ($sizes.Count -ne 2 -or @($sizes | Where-Object { $_ -lt 128 -or $_ -gt 320 }).Count -gt 0) {
+        throw 'The selected model has unsupported input sizes.'
+    }
+    $caches = @{}
+    Write-Host "TRAIN_STATUS phase=preparing"
+    foreach ($size in ($sizes | Select-Object -Unique)) {
+        $cache = Join-Path $PSScriptRoot ("training\{0}-personal-refinement-{1}px" -f [System.IO.Path]::GetFileNameWithoutExtension($capture), $size)
+        # Resize once from the recorded camera image at each branch resolution.
+        & $python .\prepare_tongue_stills.py $capture --session $latest.FullName --output $cache --size $size
+        if ($LASTEXITCODE -ne 0) { throw "Preparing the $size px refinement frames failed." }
+        $caches[[int]$size] = $cache
+    }
+    $gateCache = $caches[[int]$sizes[0]]
+    $directionCache = $caches[[int]$sizes[1]]
     # A failed earlier run may have left an unpaired checkpoint or TorchScript
     # companion. Allocate beyond every existing tongue-model artifact so a
     # retry cannot replace any personal weights or metadata.
@@ -129,10 +162,10 @@ try {
     if ($device -eq "cpu") { Write-Warning "CUDA is unavailable. CPU fallback is active; training can take substantially longer. NVIDIA users should rerun PC runtime setup after installing the current NVIDIA driver." }
 
     Write-Host "TRAIN_STAGE index=1 total=2 name=visibility epochs=$Epochs device=$device"
-    & $python .\train_tongue_model.py $cache --architecture spatial-stereo-resnet-v2 --checkpoint-focus visibility --initial-checkpoint $base.Gate --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $gateOutput
+    & $python .\train_tongue_model.py $gateCache --architecture spatial-stereo-resnet-v2 --checkpoint-focus visibility --initial-checkpoint $base.Gate --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $gateOutput
     if ($LASTEXITCODE -ne 0) { throw "Refining tongue visibility failed." }
     Write-Host "TRAIN_STAGE index=2 total=2 name=direction epochs=$Epochs device=$device"
-    & $python .\train_tongue_model.py $cache --architecture spatial-stereo-resnet-v2 --checkpoint-focus direction --initial-checkpoint $base.Direction --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $directionOutput
+    & $python .\train_tongue_model.py $directionCache --architecture spatial-stereo-resnet-v2 --checkpoint-focus direction --initial-checkpoint $base.Direction --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $directionOutput
     if ($LASTEXITCODE -ne 0) { throw "Refining tongue direction failed." }
     Write-Host "MODEL_READY version=$version parent=$($base.Version)"
 }

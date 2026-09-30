@@ -3,7 +3,8 @@ param(
     [string]$PackageName = "",
     [switch]$NoRestore,
     [string]$AssetRoot = "",
-    [string]$VrcftInstallDir = ""
+    [string]$VrcftInstallDir = "",
+    [string]$ExperimentalTongueModelRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -176,6 +177,31 @@ $runtimeFiles = @(
     "release-manifest.json"
 )
 foreach ($file in $runtimeFiles) { Copy-ReleaseFile $file }
+
+if (-not [string]::IsNullOrWhiteSpace($ExperimentalTongueModelRoot)) {
+    $experimentalRoot = [System.IO.Path]::GetFullPath($ExperimentalTongueModelRoot)
+    $metadataFiles = @(Get-ChildItem -LiteralPath $experimentalRoot -File -Filter 'qpro-stereo-tongue-v*.metadata.json')
+    if ($metadataFiles.Count -ne 1) { throw 'The experimental model folder must identify exactly one paired model.' }
+    $metadataFile = $metadataFiles[0]
+    $metadata = Get-Content -LiteralPath $metadataFile.FullName -Raw | ConvertFrom-Json
+    if ($metadataFile.Name -notmatch '^qpro-stereo-tongue-v(?<version>\d+)\.metadata\.json$') { throw 'Invalid experimental model filename.' }
+    $experimentalVersion = [int]$Matches.version
+    if ($experimentalVersion -le 8 -or $metadata.version -ne $experimentalVersion -or
+        $metadata.format -ne 'qpro-tongue-model-metadata-v1' -or
+        $metadata.modelKind -ne 'mustachio-experimental' -or $metadata.isExperimental -ne $true) {
+        throw 'Experimental models require explicit Mustachio metadata and a separate version above v8.'
+    }
+    # Copy only the public weights and classification, never the private cache,
+    # photographs, source journals or training logs beside them.
+    foreach ($name in @("qpro-stereo-tongue-v$experimentalVersion-gate.pt", "qpro-stereo-tongue-v$experimentalVersion-direction.pt", $metadataFile.Name)) {
+        $source = Join-Path $experimentalRoot $name
+        $destination = Join-Path $runtimeRoot ("models\" + $name)
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item -LiteralPath $source).Length -eq 0) { throw "Experimental model file is missing or empty: $name" }
+        if (Test-Path -LiteralPath $destination) { throw "Experimental model would replace an existing model: $name" }
+        Copy-Item -LiteralPath $source -Destination $destination
+        $runtimeFiles += "models\$name"
+    }
+}
 # Check the packaged Python tree, not only the source list. A missing local
 # module can otherwise leave capture working while training fails at import.
 $missingLocalImports = @(

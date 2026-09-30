@@ -131,7 +131,10 @@ internal sealed partial class HubForm
             using var fill = new SolidBrush(selected ? Selected : Raised);
             e.Graphics.FillRectangle(fill, e.Bounds);
             var item = box.Items[e.Index]?.ToString() ?? string.Empty;
-            TextRenderer.DrawText(e.Graphics, item, box.Font, new Rectangle(e.Bounds.X + 7, e.Bounds.Y, e.Bounds.Width - 7, e.Bounds.Height), Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            var textLeft = e.Bounds.X + 7;
+            if (box.Items[e.Index] is FileChoice { HasMoustacheIcon: true })
+                textLeft += DrawMoustacheIcon(e.Graphics, e.Bounds, textLeft);
+            TextRenderer.DrawText(e.Graphics, item, box.Font, new Rectangle(textLeft, e.Bounds.Y, e.Bounds.Right - textLeft, e.Bounds.Height), Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         };
     }
 
@@ -150,8 +153,33 @@ internal sealed partial class HubForm
             using var border = new Pen(selected ? Accent : Border, selected ? 2 : 1);
             e.Graphics.DrawRectangle(border, e.Bounds.X + 1, e.Bounds.Y + 1, e.Bounds.Width - 3, e.Bounds.Height - 3);
             var item = box.Items[e.Index]?.ToString() ?? string.Empty;
-            TextRenderer.DrawText(e.Graphics, (selected ? "●  " : "○  ") + item, box.Font, new Rectangle(e.Bounds.X + 10, e.Bounds.Y, e.Bounds.Width - 18, e.Bounds.Height), Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+            var textLeft = e.Bounds.X + 10;
+            if (box.Items[e.Index] is FileChoice { HasMoustacheIcon: true })
+                textLeft += DrawMoustacheIcon(e.Graphics, e.Bounds, textLeft);
+            TextRenderer.DrawText(e.Graphics, (selected ? "●  " : "○  ") + item, box.Font, new Rectangle(textLeft, e.Bounds.Y, e.Bounds.Right - textLeft - 8, e.Bounds.Height), Color.White, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         };
+    }
+
+    private static int DrawMoustacheIcon(Graphics graphics, Rectangle itemBounds, int left)
+    {
+        var scale = graphics.DpiX / 96F;
+        var width = 24F * scale;
+        var height = 12F * scale;
+        var top = itemBounds.Top + (itemBounds.Height - height) / 2F;
+        using var path = new GraphicsPath();
+        PointF At(float x, float y) => new(left + x * width, top + y * height);
+        // Two curled lobes keep the small icon recognizable at every DPI.
+        path.AddBezier(At(0.5F, 0.2F), At(0.25F, -0.15F), At(0.3F, 0.9F), At(0F, 0.45F));
+        path.AddBezier(At(0F, 0.45F), At(0.08F, 1.25F), At(0.35F, 1.1F), At(0.5F, 0.65F));
+        path.AddBezier(At(0.5F, 0.65F), At(0.65F, 1.1F), At(0.92F, 1.25F), At(1F, 0.45F));
+        path.AddBezier(At(1F, 0.45F), At(0.7F, 0.9F), At(0.75F, -0.15F), At(0.5F, 0.2F));
+        path.CloseFigure();
+        var previousSmoothing = graphics.SmoothingMode;
+        graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using var brush = new SolidBrush(Accent);
+        graphics.FillPath(brush, path);
+        graphics.SmoothingMode = previousSmoothing;
+        return (int)Math.Ceiling(width + 7F * scale);
     }
 
     private static DarkButton NavigationButton(string text)
