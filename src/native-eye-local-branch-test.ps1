@@ -5,6 +5,7 @@ param(
     [switch]$Calibrate,
     [switch]$RuntimePreview,
     [switch]$VrcftOutput,
+    [switch]$NoWindow,
     [string]$AdbTarget = "",
     [switch]$Wireless,
     [string]$CalibrationOutput = ".\calibration\qpro-independent-visual-axis-v2.json",
@@ -53,24 +54,26 @@ if (-not (Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $pythonFa
 $localModel = Join-Path $root "research\seacliff_eye_model\bolt-independent-axes.ptl"
 $modelManifest = Join-Path $root "research\seacliff_eye_model\bolt-independent-axes.manifest.json"
 $modelPreflight = Join-Path $root "prepare_eye_model.py"
-$remoteModel = "/data/local/tmp/qpro-seacliff-independent-axes.ptl"
+$gazeSessionId = [Guid]::NewGuid().ToString('N')
+$remoteModel = "/data/local/tmp/qpro-seacliff-independent-axes-$gazeSessionId.ptl"
 $targetModel = "/odm/etc/eyetracking/runtime/models/Seacliff_V1_5/fbnet/int8/experimental/bolt/bolt.ptl"
 $modelProperty = "persist.device_config.oculus_shared_vision.oculus_eyetracking_enable_experimental_model"
+$gazeJournalPath = "/data/local/tmp/qpro-independent-gaze-session.json"
 $overlay = Resolve-WorkspacePath $OverlayPath
 $calibrationOutputPath = Resolve-WorkspacePath $CalibrationOutput
 
 if (-not (Test-Path -LiteralPath $adb)) { throw "ADB not found. Re-extract the release so platform-tools\adb.exe is present." }
 if (-not ($RestoreOnly -or $RestoreIfActive) -and -not (Test-Path -LiteralPath $python)) { throw "Project Python environment not found under .venv\Scripts." }
-if ($Calibrate) {
+if ($Calibrate -and -not ($RestoreOnly -or $RestoreIfActive)) {
     if (-not (Test-Path -LiteralPath $overlay)) { throw "BabbleCalibration not found: $overlay" }
     if (-not (Get-Process -Name "vrserver" -ErrorAction SilentlyContinue)) {
         throw "Start SteamVR before visual-axis calibration."
     }
 }
-if (($RuntimePreview -or $VrcftOutput) -and -not (Test-Path -LiteralPath $calibrationOutputPath)) {
+if (($RuntimePreview -or $VrcftOutput) -and -not ($RestoreOnly -or $RestoreIfActive) -and -not (Test-Path -LiteralPath $calibrationOutputPath)) {
     throw "Independent visual-axis calibration not found: $calibrationOutputPath"
 }
-if ($VrcftOutput -and -not (Get-Process -Name "VRCFaceTracking" -ErrorAction SilentlyContinue)) {
+if ($VrcftOutput -and -not ($RestoreOnly -or $RestoreIfActive) -and -not (Get-Process -Name "VRCFaceTracking" -ErrorAction SilentlyContinue)) {
     throw "Start VRCFaceTracking before enabling gaze-only output."
 }
 
@@ -127,42 +130,182 @@ function Get-TargetMount {
     return ""
 }
 
-function Test-QproModelMount {
-    $mount = Get-TargetMount
-    if ([string]::IsNullOrWhiteSpace($mount)) { return $false }
-    # Identical bytes alone do not prove ownership: another Magisk module
-    # could mount a copy of the same patch. A Qpro bind mount shares the exact
-    # device and inode of our temporary source file.
-    $mountedIdentity = Invoke-Root "stat -c '%d:%i' '$targetModel'" -AllowFailure
-    $qproIdentity = Invoke-Root "stat -c '%d:%i' '$remoteModel'" -AllowFailure
-    if ($mountedIdentity -notmatch '^\d+:\d+$' -or $mountedIdentity -ne $qproIdentity) { return $false }
-    $mountedHash = ((Invoke-Root "sha256sum '$targetModel'" -AllowFailure) -split '\s+')[0].ToLowerInvariant()
-    $qproHash = ((Invoke-Root "sha256sum '$remoteModel'" -AllowFailure) -split '\s+')[0].ToLowerInvariant()
-    return ($mountedHash -match '^[0-9a-f]{64}$' -and $mountedHash -eq $qproHash)
+function Get-GazeDeviceSerial {
+    $serial = Invoke-Root "getprop ro.boot.serialno"
+    if ([string]::IsNullOrWhiteSpace($serial) -or $serial -eq "unknown") {
+        $serial = Invoke-Root "getprop ro.serialno"
+    }
+    if ($serial -notmatch '^[A-Za-z0-9_.:-]{1,128}$' -or $serial -eq "unknown") {
+        throw "The headset identity could not be verified for eye-model recovery. No tracking was changed."
+    }
+    return $serial
 }
 
-function Restore-StockModel([string]$PropertyValue = "false") {
-    Write-Host "HEADSET_TRACKING_RESTART phase=restore status=begin"
-    Invoke-Root "stop trackingservice" -AllowFailure | Out-Null
+function Get-GazeFileHash([string]$Path) {
+    $hash = ((Invoke-Root "sha256sum '$Path'") -split '\s+')[0].ToLowerInvariant()
+    if ($hash -notmatch '^[0-9a-f]{64}$') { throw "Could not verify the eye-model file hash. No tracking was changed." }
+    return $hash
+}
+
+function Get-GazeOwnerHost {
+    $bytes = [Text.Encoding]::UTF8.GetBytes([Environment]::MachineName + ':' + [Environment]::UserName)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($hasher.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+}
+
+function Assert-GazeOwnerStopped($Journal) {
+    if ($Journal.ownerHost -ne (Get-GazeOwnerHost)) {
+        throw "The recorded Qpro session belongs to another PC or user. Recovery ownership could not be confirmed; no tracking was changed."
+    }
+    try { $owner = [Diagnostics.Process]::GetProcessById([int]$Journal.ownerPid) }
+    catch [ArgumentException] { return }
     try {
-        Invoke-Root "setprop $modelProperty $PropertyValue" -AllowFailure | Out-Null
-        Invoke-Root "umount '$targetModel'" -AllowFailure | Out-Null
+        if ($owner.HasExited -or $owner.StartTime.ToUniversalTime().Ticks.ToString() -ne $Journal.ownerStarted) { return }
+        # The creating PowerShell's finally may restore its own session. A
+        # second Hub must not recover a session whose owner is still running.
+        if ($owner.Id -ne $PID) { throw "The recorded Qpro gaze process is still running. Stop its owning Hub before recovery; no tracking was changed." }
+    } finally { $owner.Dispose() }
+}
+
+function Read-GazeJournal {
+    $text = Invoke-Root "if test -e '$gazeJournalPath'; then cat '$gazeJournalPath'; else echo __QPRO_NO_GAZE_JOURNAL__; fi"
+    if ($text -eq "__QPRO_NO_GAZE_JOURNAL__") { return $null }
+    if ((Invoke-Root "stat -c '%u:%a' '$gazeJournalPath'") -ne "0:600") {
+        throw "The eye-model recovery journal is not a private root-owned Qpro file. No tracking was changed."
     }
-    finally {
-        # Always restart the Meta service, even when a headset command fails.
-        Invoke-Root "start trackingservice" -AllowFailure | Out-Null
+    if ($text.Length -gt 4096) { throw "The eye-model recovery journal is invalid. No tracking was changed." }
+    try { $journal = $text | ConvertFrom-Json }
+    catch { throw "The eye-model recovery journal is not valid JSON. No tracking was changed." }
+    foreach ($name in @('format', 'owner', 'sessionId', 'ownerHost', 'ownerPid', 'ownerStarted', 'deviceSerial', 'bootId', 'targetModel', 'remoteModel', 'modelProperty', 'sourceHash', 'sourceIdentity', 'originalModelHash', 'originalProperty')) {
+        if ($null -eq $journal.PSObject.Properties[$name] -or $journal.$name -isnot [string]) {
+            throw "The eye-model recovery journal has missing or invalid fields. No tracking was changed."
+        }
     }
-    Wait-TrackingService
-    $remainingMount = Get-TargetMount
-    if (-not [string]::IsNullOrWhiteSpace($remainingMount)) {
-        throw "The temporary eye-model mount is still active after restore. Stock gaze was not confirmed; check Activity before starting tracking again."
+    if ($journal.format -ne 'qpro-headset-gaze-session-v1' -or $journal.owner -ne 'QproFaceTracking' -or
+        $journal.sessionId -notmatch '^[0-9a-f]{32}$' -or $journal.deviceSerial -notmatch '^[A-Za-z0-9_.:-]{1,128}$' -or
+        $journal.ownerHost -notmatch '^[0-9a-f]{64}$' -or $journal.ownerPid -notmatch '^[1-9][0-9]{0,9}$' -or [long]$journal.ownerPid -gt [int]::MaxValue -or
+        $journal.ownerStarted -notmatch '^[0-9]{1,19}$' -or
+        $journal.bootId -notmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or
+        $journal.targetModel -notmatch '^/odm/etc/eyetracking/runtime/models/[A-Za-z0-9_./-]+/bolt\.ptl$' -or $journal.targetModel.Contains('..') -or
+        $journal.remoteModel -ne "/data/local/tmp/qpro-seacliff-independent-axes-$($journal.sessionId).ptl" -or $journal.modelProperty -ne $modelProperty -or
+        $journal.sourceHash -notmatch '^[0-9a-f]{64}$' -or $journal.originalModelHash -notmatch '^[0-9a-f]{64}$' -or
+        $journal.sourceIdentity -notmatch '^\d+:\d+$' -or $journal.originalProperty -notin @('', 'false', 'true', '0', '1')) {
+        throw "The eye-model recovery journal is not a valid Qpro session. No tracking was changed."
     }
-    $restoredProperty = Invoke-Root "getprop $modelProperty" -AllowFailure
-    if ($restoredProperty -ne $PropertyValue) {
-        throw "The headset eye-model property did not return to its original value ($PropertyValue). Stock gaze was not confirmed."
+    if ($journal.deviceSerial -ne (Get-GazeDeviceSerial)) {
+        throw "The eye-model recovery journal belongs to another headset. No tracking was changed."
     }
-    Write-Host "HEADSET_TRACKING_RESTART phase=restore status=running"
+    return $journal
+}
+
+function New-GazeJournal([string]$OriginalProperty, [string]$PatchedHash, [string]$ExpectedOriginalHash) {
+    if ($OriginalProperty -notin @('', 'false', 'true', '0', '1') -or $PatchedHash -notmatch '^[0-9a-f]{64}$' -or $ExpectedOriginalHash -notmatch '^[0-9a-f]{64}$') {
+        throw "The original eye-model state could not be recorded safely. No tracking was changed."
+    }
+    if ($null -ne (Read-GazeJournal) -or -not [string]::IsNullOrWhiteSpace((Get-TargetMount))) {
+        throw "An eye-model session is already active. Recover it before starting another gaze session."
+    }
+    $identity = Invoke-Root "stat -c '%d:%i' '$remoteModel'"
+    if ($identity -notmatch '^\d+:\d+$' -or (Get-GazeFileHash $remoteModel) -ne $PatchedHash) {
+        throw "The temporary eye-model source could not be verified. No tracking was changed."
+    }
+    $bootId = Invoke-Root "cat /proc/sys/kernel/random/boot_id"
+    if ($bootId -notmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') {
+        throw "The headset boot identity could not be verified. No tracking was changed."
+    }
+    if ((Invoke-Root "getprop $modelProperty") -ne $OriginalProperty) {
+        throw "The headset eye-model selection changed during startup. No tracking was changed."
+    }
+    $originalHash = Get-GazeFileHash $targetModel
+    if ($originalHash -ne $ExpectedOriginalHash) {
+        throw "The headset eye model changed after compatibility checking. No tracking was changed."
+    }
+    $journal = [PSCustomObject]@{
+        format = 'qpro-headset-gaze-session-v1'; owner = 'QproFaceTracking'
+        ownerHost = Get-GazeOwnerHost; ownerPid = $PID.ToString(); ownerStarted = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks.ToString()
+        sessionId = $gazeSessionId; deviceSerial = Get-GazeDeviceSerial
+        bootId = $bootId; targetModel = $targetModel; remoteModel = $remoteModel; modelProperty = $modelProperty
+        sourceHash = $PatchedHash; sourceIdentity = $identity; originalModelHash = $originalHash
+        originalProperty = $OriginalProperty
+    }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($journal | ConvertTo-Json -Compress)))
+    $temporary = $gazeJournalPath + '.' + $journal.sessionId + '.tmp'
+    # Commit the restore state before any tracking change. A hard process stop
+    # or reboot can remove the mount but leave the persist.* property enabled.
+    Invoke-Root "umask 077; if test -e '$gazeJournalPath'; then exit 1; fi; printf '%s' '$encoded' | base64 -d > '$temporary' && chown root:root '$temporary' && chmod 0600 '$temporary' && ln '$temporary' '$gazeJournalPath' && rm '$temporary' && sync" | Out-Null
+    $script:cleanupNeeded = $true
+    $saved = Read-GazeJournal
+    if ($null -eq $saved -or $saved.sessionId -ne $journal.sessionId) {
+        throw "The eye-model recovery journal could not be committed. No tracking was changed."
+    }
+}
+
+function Restore-StockModel($Journal) {
+    Assert-GazeOwnerStopped $Journal
+    $script:targetModel = $Journal.targetModel
+    $script:remoteModel = $Journal.remoteModel
+    $sourceIdentity = Invoke-Root "stat -c '%d:%i' '$remoteModel'"
+    if ($sourceIdentity -ne $Journal.sourceIdentity -or (Get-GazeFileHash $remoteModel) -ne $Journal.sourceHash) {
+        throw "The recorded temporary eye-model source has changed or is missing. Recovery was not applied."
+    }
+    $mounted = -not [string]::IsNullOrWhiteSpace((Get-TargetMount))
+    if ($mounted) {
+        if ((Invoke-Root "stat -c '%d:%i' '$targetModel'") -ne $Journal.sourceIdentity -or
+            (Get-GazeFileHash $targetModel) -ne $Journal.sourceHash) {
+            throw "A foreign eye-model mount is active. Remove it through its own module; Qpro did not change it."
+        }
+    } elseif ((Get-GazeFileHash $targetModel) -ne $Journal.originalModelHash) {
+        throw "The headset eye model changed since the recorded Qpro session. Recovery was not applied."
+    }
+    $property = Invoke-Root "getprop $modelProperty"
+    if ($property -ne $Journal.originalProperty -and $property -ne 'true') {
+        throw "The headset eye-model selection changed outside the recorded Qpro session. Recovery was not applied."
+    }
+    if ($mounted -or $property -ne $Journal.originalProperty) {
+        Write-Host "HEADSET_TRACKING_RESTART phase=restore status=begin"
+        try {
+            Invoke-Root "stop trackingservice" | Out-Null
+            Invoke-Root "setprop $modelProperty '$($Journal.originalProperty)'" | Out-Null
+            if ($mounted) { Invoke-Root "umount '$targetModel'" | Out-Null }
+        } finally {
+            # A failed property/unmount operation retains the journal for retry.
+            Invoke-Root "start trackingservice" -AllowFailure | Out-Null
+        }
+        Wait-TrackingService
+        Write-Host "HEADSET_TRACKING_RESTART phase=restore status=running"
+    }
+    if (-not [string]::IsNullOrWhiteSpace((Get-TargetMount)) -or
+        (Invoke-Root "getprop $modelProperty") -ne $Journal.originalProperty -or
+        (Get-GazeFileHash $targetModel) -ne $Journal.originalModelHash) {
+        throw "The recorded pre-Qpro eye-model state could not be confirmed. Keep the Hub open and check Activity."
+    }
+    Invoke-Root "rm '$gazeJournalPath'" | Out-Null
     Invoke-Root "rm -f '$remoteModel'" -AllowFailure | Out-Null
+}
+
+function Invoke-GazeRecovery {
+    try {
+        $journal = Read-GazeJournal
+        if ($null -ne $journal) {
+            Restore-StockModel $journal
+            Write-Host "Recorded pre-Qpro eye-model state restored. Other modules were not disabled."
+            Write-Host "QPRO_GAZE_RECOVERY restored"
+            return
+        }
+        if (-not [string]::IsNullOrWhiteSpace((Get-TargetMount))) {
+            throw "An eye-model mount exists without a verified recovery journal. Qpro did not remove it or change the headset selection."
+        }
+        $property = Invoke-Root "getprop $modelProperty"
+        if ($property -notin @('', 'false', '0')) {
+            throw "The experimental eye-model selection is enabled without a Qpro recovery journal. It may belong to Magisk or an interrupted older session. Qpro did not change it; stock gaze cannot be confirmed."
+        }
+        Write-Host "No recorded Qpro gaze session remains. Other headset modules were not checked or disabled."
+        Write-Host "QPRO_GAZE_RECOVERY none"
+    } catch {
+        Write-Host "QPRO_GAZE_RECOVERY unconfirmed"
+        throw
+    }
 }
 
 try {
@@ -185,26 +328,15 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($preparedPath)) { $targetModel = $preparedPath }
 
     if ($RestoreOnly) {
-        if (Test-QproModelMount) {
-            Restore-StockModel
-            Write-Host "Stock Meta eye model restored."
-        } elseif (-not [string]::IsNullOrWhiteSpace((Get-TargetMount))) {
-            throw "An eye-model mount remains, but it cannot be verified as Qpro's temporary mount. No headset tracking was changed. Remove the other module's mount through that module."
-        } else {
-            Write-Host "No verified Qpro temporary eye-model mount was found; headset tracking was not changed."
-        }
+        Invoke-GazeRecovery
         exit 0
     }
     if ($RestoreIfActive) {
-        if (Test-QproModelMount) {
-            Restore-StockModel
-            Write-Host "Recovered and removed the remaining Qpro temporary eye-model mount."
-        } elseif (-not [string]::IsNullOrWhiteSpace((Get-TargetMount))) {
-            throw "An eye-model mount remains, but it cannot be verified as Qpro's temporary mount. Stock gaze was not confirmed."
-        } else {
-            Write-Host "No remaining Qpro temporary eye-model mount was found; no tracking restart needed."
-        }
+        Invoke-GazeRecovery
         exit 0
+    }
+    if ($null -ne (Read-GazeJournal)) {
+        throw "A recorded Qpro gaze session remains. Stop its owning Hub first, or use gaze recovery after that process has ended. No new tracking was started."
     }
     $existingMount = Get-TargetMount
     if (-not [string]::IsNullOrWhiteSpace($existingMount)) {
@@ -226,8 +358,10 @@ try {
     }
     Write-Host "Prepared eye model matches this headset and supported tracking engine."
 
-    $originalProperty = (Invoke-Root "getprop $modelProperty" -AllowFailure)
-    if ([string]::IsNullOrWhiteSpace($originalProperty)) { $originalProperty = "false" }
+    $originalProperty = Invoke-Root "getprop $modelProperty"
+    if ($originalProperty -notin @('', 'false', '0')) {
+        throw "The experimental eye-model selection is already enabled without a recorded Qpro session. It may belong to Magisk or an interrupted older Qpro version. No new tracking was applied; identify that method before starting Qpro gaze."
+    }
     $cleanupNeeded = $false
     try {
     & $adb push $localModel $remoteModel | Out-Host
@@ -235,10 +369,13 @@ try {
     Invoke-Root "chown root:root '$remoteModel'" | Out-Null
     Invoke-Root "chmod 0644 '$remoteModel'" | Out-Null
     Invoke-Root "chcon u:object_r:vendor_configs_file:s0 '$remoteModel'" | Out-Null
-    Invoke-Root "mount --bind '$remoteModel' '$targetModel'" | Out-Null
-    $cleanupNeeded = $true
-
     $localHash = (Get-FileHash -LiteralPath $localModel -Algorithm SHA256).Hash.ToLowerInvariant()
+    $preparedManifest = Get-Content -LiteralPath $modelManifest -Raw | ConvertFrom-Json
+    if ($localHash -ne $preparedManifest.patchedSha256) { throw "The prepared eye-model patch changed during startup. No tracking was changed." }
+    New-GazeJournal $originalProperty $localHash ([string]$preparedManifest.sourceSha256)
+    Write-Host "QPRO_GAZE_SESSION applied"
+    Invoke-Root "mount --bind '$remoteModel' '$targetModel'" | Out-Null
+
     $remoteHash = ((Invoke-Root "sha256sum '$targetModel'") -split "\s+")[0].ToLowerInvariant()
     if ($localHash -ne $remoteHash) { throw "The temporary model failed its headset hash check." }
 
@@ -248,7 +385,7 @@ try {
     Invoke-Root "start trackingservice" | Out-Null
     Wait-TrackingService
     Write-Host "HEADSET_TRACKING_RESTART phase=apply status=running"
-    Write-Host "Temporary independent Meta gaze branch active. Q restores the stock model."
+    Write-Host "Temporary independent Meta gaze branch active. Q restores the recorded pre-Qpro eye state."
 
     if ($RuntimePreview -or $VrcftOutput) {
         $runtimeArguments = @(
@@ -257,6 +394,7 @@ try {
             "--calibration", $calibrationOutputPath
         )
         if ($VrcftOutput) { $runtimeArguments += @("--output-vrcft", "--sample-timeout-seconds", "20") }
+        if ($NoWindow) { $runtimeArguments += "--no-window" }
         if ($HeadlessSeconds -gt 0) {
             $runtimeArguments += @("--headless-seconds", $HeadlessSeconds)
         }
@@ -296,8 +434,7 @@ try {
     }
     finally {
         if ($cleanupNeeded) {
-            Restore-StockModel $originalProperty
-            Write-Host "Stock Meta eye model restored."
+            Invoke-GazeRecovery
         }
     }
 }
