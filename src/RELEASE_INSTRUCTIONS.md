@@ -15,7 +15,7 @@ Start with the headset's eye tracking, then set up the PC software. The **Hub** 
 3. In the same Singularity menu, install **Quest Pro Independent Eye Gaze** if it is not installed yet. Reboot if prompted, then check in Magisk that both modules are enabled. This is the headset-side independent gaze route.
 4. Once your selected headset streaming app and VRCFaceTracking are installed in section 3, check that left and right gaze and convergence move correctly. The Magisk route has been reported working on **Horizon OS v2.7**, but exact firmware builds can behave differently.
 
-**Use one independent gaze method at a time.** While the Magisk module is active, leave **Independent Eye Gaze** unchecked in the Hub and skip **Prepare gaze** in section 5. If you want to try the Hub's temporary gaze method instead, disable the Magisk gaze module and reboot first. **Stop tracking** only reverses the Hub's changes; it does not disable a Magisk module.
+**Use one independent gaze method at a time.** While the Magisk module is active, leave **Independent Eye Gaze** unchecked in the Hub. If you want to try the Hub's temporary gaze method instead, enable it and start tracking; the headset will freeze while it hooks into the tracking engine. **Stop tracking** only reverses the Hub's changes; it does not disable a Magisk module.
 
 ## 2. Download and open the Hub
 
