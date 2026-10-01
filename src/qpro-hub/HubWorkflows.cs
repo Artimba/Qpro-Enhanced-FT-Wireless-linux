@@ -139,6 +139,7 @@ internal sealed partial class HubForm
             : model is null
                 ? "No complete gate/direction model pair was found."
                 : "Personal model discovered in this release folder. The bundled developer v8 remains unchanged.";
+        _tongueModelNote.Text += " Stop tracking before changing models, then press Start tracking to load the selection.";
     }
 
     private async Task ConfirmCaptureAsync(TongueDatasetKind kind)
@@ -383,6 +384,7 @@ internal sealed partial class HubForm
         UpdateModuleInstallButtonState(enabled);
         _uninstallBridgeButton.Enabled = enabled && BridgeUninstallAvailable();
         _setupGazeButton.Enabled = enabled;
+        _recoverGazeButton.Enabled = enabled && !_gazeRecoveryRunning;
         _enableWirelessButton.Enabled = enabled;
         _connectWirelessButton.Enabled = enabled;
         _pairWirelessButton.Enabled = enabled;
@@ -535,7 +537,11 @@ internal sealed partial class HubForm
                     var eye = (FileChoice)_eyeProfiles.SelectedItem!;
                     _runStatus.Text = "● Checking independent gaze compatibility…";
                     AppendLog("Checking the prepared eye model against this headset before changing tracking. If compatible, Meta trackingservice restarts briefly during apply and restore.");
-                    gazeProcess = StartManaged("Independent gaze", "native-eye-local-branch-test.ps1", "-RuntimePreview", "-VrcftOutput", "-CalibrationOutput", eye.Primary, "-StopFile", _stopFile);
+                    var gazeArguments = new List<string> { "-RuntimePreview", "-VrcftOutput", "-CalibrationOutput", eye.Primary, "-StopFile", _stopFile };
+                    if (!_cameraPreview.Checked) gazeArguments.Add("-NoWindow");
+                    AppendLog(_cameraPreview.Checked ? "Independent gaze preview enabled; its display is limited to 20 FPS."
+                        : "Independent gaze preview off; live gaze output continues without rendering a window.");
+                    gazeProcess = StartManaged("Independent gaze", "native-eye-local-branch-test.ps1", gazeArguments.ToArray());
                     AppendLog("Waiting for a valid paired-eye gaze sample before starting cameras…");
                     bool gazeReady = await gazeReadySignal.Task.WaitAsync(TimeSpan.FromSeconds(90), startCancellation.Token);
                     if (!gazeReady || gazeProcess.HasExited)
@@ -627,13 +633,16 @@ internal sealed partial class HubForm
                 AppendLog("Tracking cleanup is still running. The stop request remains active; press Stop tracking again if needed, or Q if the preview is still open.");
             else
             {
-                gazeRestoreFailed = !_gazeRecoveryConfirmed && _trackingProcesses.Any(process => process.HasExited && process.ExitCode != 0 &&
+                // Drain final stdout before inspecting the recovery marker. An
+                // exit code alone cannot prove that the headset was restored.
+                foreach (var process in _trackingProcesses) process.WaitForExit();
+                gazeRestoreFailed = !_gazeRecoveryConfirmed && _trackingProcesses.Any(process =>
                     process.StartInfo.ArgumentList.Any(argument =>
                         argument.EndsWith("native-eye-local-branch-test.ps1", StringComparison.OrdinalIgnoreCase)));
                 File.Delete(_stopFile);
                 AppendLog(gazeRestoreFailed
-                    ? "All selected override processes stopped, but the stock eye-model restore could not be confirmed. Check the Independent gaze error in Activity before starting again."
-                    : "All selected overrides stopped; stock tracking restored.");
+                    ? "Qpro live processes stopped, but eye-model recovery was not confirmed. Use Recover Qpro gaze in First-time setup and check Activity before starting gaze again."
+                    : "Qpro live overrides stopped. The installed VRCFT module's face adjustments and any Magisk modules remain active.");
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -651,7 +660,7 @@ internal sealed partial class HubForm
             _runStatus.Text = stopRequestFailed ? "● Stop request failed — check Activity"
                 : _trackingProcesses.Count != 0 ? "● Waiting for tracking cleanup"
                 : gazeRestoreFailed ? "● Eye-model restore unconfirmed — check Activity"
-                : "● Idle — stock tracking is untouched";
+                : "● Idle — Qpro live overrides off";
             _runStatus.ForeColor = _trackingProcesses.Count == 0 && !gazeRestoreFailed && !stopRequestFailed ? Good : Warning;
             if (_trackingProcesses.Count == 0) ResetInferenceStatus();
             UpdateControlState();
@@ -669,6 +678,7 @@ internal sealed partial class HubForm
             HandleInferenceStatus(label, line);
             if (label == "Independent gaze" && line.StartsWith("GAZE_STREAM_READY ", StringComparison.Ordinal))
                 _gazeStartupSignal?.TrySetResult(true);
+            if (label == "Independent gaze") ObserveGazeRecovery(line, allowNoSession: false);
         }
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) ReportLine(e.Data); };
         process.ErrorDataReceived += (_, e) => { if (e.Data is not null) ReportLine(e.Data); };
@@ -736,13 +746,16 @@ internal sealed partial class HubForm
                 throw new TimeoutException("The stock eye-model recovery check timed out.");
             }
             foreach (var line in (await output + Environment.NewLine + await errors).Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            {
                 AppendLog("[Independent gaze recovery] " + line);
+                ObserveGazeRecovery(line, allowNoSession: true);
+            }
             if (process.ExitCode != 0) throw new InvalidOperationException($"Stock eye-model recovery failed with code {process.ExitCode}.");
-            _gazeRecoveryConfirmed = true;
+            if (!_gazeRecoveryConfirmed) throw new InvalidOperationException("The recovery script did not confirm the Qpro session state.");
             if (_stopping || IsDisposed || Disposing || (_starting && _startCancellation?.IsCancellationRequested == true)) return;
             _runStatus.Text = _trackingProcesses.Any(p => !p.HasExited)
                 ? "● Independent gaze disabled — other tracking continues"
-                : "● Independent gaze disabled — stock eye model checked";
+                : "● Independent gaze disabled — Qpro recovery checked";
         }
         catch (Exception error)
         {
@@ -757,6 +770,29 @@ internal sealed partial class HubForm
         }
         _runStatus.ForeColor = Warning;
         UpdateControlState();
+    }
+
+    private void ObserveGazeRecovery(string line, bool allowNoSession)
+    {
+        if (line == "QPRO_GAZE_SESSION applied" || line == "QPRO_GAZE_RECOVERY unconfirmed")
+            _gazeRecoveryConfirmed = false;
+        else if (line == "QPRO_GAZE_RECOVERY restored" || allowNoSession && line == "QPRO_GAZE_RECOVERY none")
+            _gazeRecoveryConfirmed = true;
+    }
+
+    private async Task RecoverGazeAsync()
+    {
+        if (UtilityActionIsBusy()) return;
+        _gazeRecoveryConfirmed = false;
+        _gazeRecoveryRunning = true;
+        UpdateControlState();
+        try
+        {
+            var succeeded = await RunUtilityAsync("Qpro gaze recovery", "native-eye-local-branch-test.ps1", "-RestoreIfActive");
+            _runStatus.Text = succeeded ? "● Idle — Qpro gaze recovery checked" : "● Gaze recovery unconfirmed — check Activity";
+            _runStatus.ForeColor = succeeded ? Good : Warning;
+        }
+        finally { _gazeRecoveryRunning = false; UpdateControlState(); }
     }
 
     private void ResetInferenceStatus()
@@ -815,6 +851,8 @@ internal sealed partial class HubForm
         {
             AppendLog($"Starting {label}…");
             var isRuntimeSetup = script.Equals("setup-runtime.ps1", StringComparison.OrdinalIgnoreCase);
+            var isGazeRecovery = script.Equals("native-eye-local-branch-test.ps1", StringComparison.OrdinalIgnoreCase) &&
+                args.Contains("-RestoreIfActive", StringComparer.OrdinalIgnoreCase);
             if (isRuntimeSetup)
                 AppendLog($"[PC runtime setup] Launching bundled setup script from {Path.Combine(_root, script)}. Keep the Hub open; it will report when PowerShell or a download is still running.");
             var start = PowerShellStart(script, args, hidden: true);
@@ -830,6 +868,7 @@ internal sealed partial class HubForm
                 Interlocked.Increment(ref outputLineCount);
                 AppendLog($"[{label}] {line}");
                 HandleTrainingProgress(label, line);
+                if (isGazeRecovery) ObserveGazeRecovery(line, allowNoSession: true);
             }
             process.OutputDataReceived += (_, e) => { if (e.Data is not null) ReportProcessLine(e.Data); };
             process.ErrorDataReceived += (_, e) => { if (e.Data is not null) ReportProcessLine(e.Data); };
@@ -870,6 +909,8 @@ internal sealed partial class HubForm
                 AppendLog("[PC runtime setup] PowerShell exited without any script output. Check that the complete release ZIP was extracted, then share this Activity log and any Windows Security alert.");
             if (process.ExitCode != 0)
                 throw new InvalidOperationException($"{label} failed with code {process.ExitCode}. See Activity for the exact error and suggested fix.");
+            if (isGazeRecovery && !_gazeRecoveryConfirmed)
+                throw new InvalidOperationException("The recovery script did not confirm the Qpro session state. Check Activity before starting independent gaze.");
             ReloadProfiles();
             // The wireless connection script already verifies ADB and Magisk root.
             // Show its result without waiting on a second network status probe.

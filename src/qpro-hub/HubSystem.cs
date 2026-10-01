@@ -142,11 +142,18 @@ internal sealed partial class HubForm
 
     private void UpdateControlState()
     {
-        _eyeProfiles.Enabled = _gaze.Checked;
-        _tongueModels.Enabled = _tongue.Checked;
-        _fps.Enabled = _tongue.Checked || _pupil.Checked;
-        _pupilSensitivity.Enabled = _pupil.Checked;
-        _cameraPreview.Enabled = !_trackingProcesses.Any(p => !p.HasExited) && !_stopping && !_starting;
+        var running = _trackingProcesses.Any(p => !p.HasExited);
+        // These values are passed once to the child process. Keep the controls
+        // locked until Stop, rather than implying that a live model was reloaded.
+        var sessionEditable = !running && !_stopping && !_starting;
+        _gaze.Enabled = sessionEditable;
+        _tongue.Enabled = sessionEditable;
+        _pupil.Enabled = sessionEditable;
+        _eyeProfiles.Enabled = _gaze.Checked && sessionEditable;
+        _tongueModels.Enabled = _tongue.Checked && sessionEditable;
+        _fps.Enabled = (_tongue.Checked || _pupil.Checked) && sessionEditable;
+        _pupilSensitivity.Enabled = _pupil.Checked && sessionEditable;
+        _cameraPreview.Enabled = sessionEditable;
         _connectionMode.Enabled = !_setupActionRunning && !_utilityActionRunning &&
             !_datasetOperationBusy && !_trackingProcesses.Any(p => !p.HasExited) &&
             !_stopping && !_starting;
@@ -154,9 +161,9 @@ internal sealed partial class HubForm
             !_datasetOperationBusy && !_trackingProcesses.Any(p => !p.HasExited) &&
             !_stopping && !_starting;
         _trackingSourceLive.Enabled = _trackingSourceSetup.Enabled;
-        _smoothing.Enabled = _tongue.Checked;
-        _visibilityMode.Enabled = _tongue.Checked;
-        var running = _trackingProcesses.Any(p => !p.HasExited);
+        _smoothing.Enabled = _tongue.Checked && sessionEditable;
+        _visibilityMode.Enabled = _tongue.Checked && sessionEditable;
+        _recoverGazeButton.Enabled = sessionEditable && !_setupActionRunning && !_utilityActionRunning && !_datasetOperationBusy && !_gazeRecoveryRunning;
         var canStart = !running && !_stopping && !_starting && !_setupActionRunning &&
             !_utilityActionRunning && !_datasetOperationBusy;
         _start.Enabled = canStart;

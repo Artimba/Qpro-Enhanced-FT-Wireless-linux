@@ -72,10 +72,11 @@ internal sealed partial class HubForm : Form
     private readonly DarkButton _setupSteamLinkModuleButton = SetupButton("Install Steam Link module");
     private readonly DarkButton _uninstallBridgeButton = SetupButton("Uninstall Qpro module");
     private readonly DarkButton _setupGazeButton = SetupButton("Prepare gaze");
+    private readonly DarkButton _recoverGazeButton = SetupButton("Recover Qpro gaze");
     private readonly DarkProgressBar _setupProgress = new() { Dock = DockStyle.Fill, Height = 18, Margin = new Padding(4, 5, 4, 2) };
     private readonly Label _setupProgressStatus = new() { Text = "Setup idle.", AutoSize = true, ForeColor = Muted, Margin = new Padding(4, 2, 4, 3), Tag = "responsive-info" };
     private readonly TableLayoutPanel _setupProgressContainer = new();
-    private readonly Label _runStatus = new() { Text = "● Idle — stock tracking is untouched", AutoSize = true, ForeColor = Good };
+    private readonly Label _runStatus = new() { Text = "● Idle — Qpro live overrides off", AutoSize = true, ForeColor = Good };
     private readonly RichTextBox _log = new() { ReadOnly = true, BackColor = Inset, ForeColor = Color.WhiteSmoke, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill, ScrollBars = RichTextBoxScrollBars.Vertical, HideSelection = false };
     private readonly Button _start = PrimaryButton("Start tracking");
     private readonly Button _stop = SecondaryButton("Stop tracking");
@@ -87,7 +88,7 @@ internal sealed partial class HubForm : Form
     private bool _gazeStartupInProgress;
     private TaskCompletionSource<bool>? _gazeStartupSignal;
     private bool _gazeFailureHandled;
-    private bool _gazeRecoveryConfirmed;
+    private volatile bool _gazeRecoveryConfirmed;
     private bool _datasetOperationBusy;
     private CancellationTokenSource? _startCancellation;
     private bool _statusRefreshBusy;
@@ -308,7 +309,7 @@ internal sealed partial class HubForm : Form
             _soundPlayer?.Dispose();
             foreach (var process in _trackingProcesses) process.Dispose();
         };
-        AppendLog("Hub ready. Nothing is applied until you press Start tracking.");
+        AppendLog("Hub ready. Qpro live overrides start when you press Start tracking. An installed Qpro module can already apply its saved face adjustments.");
     }
 
     private void InitializeTrackingSourceUi()
