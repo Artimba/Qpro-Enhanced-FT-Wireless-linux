@@ -8,7 +8,7 @@ internal sealed class CheekPuffCalibrationDialog : Form
 {
     private const int HoldMilliseconds = 3000;
     private const int MaximumSampleGap = 500;
-    private const int MinimumSamples = 30;
+    private const int SettleMilliseconds = 350;
     private readonly string _source;
     private readonly byte _expectedSource;
     private readonly Label _step = new() { AutoSize = true, ForeColor = Color.White };
@@ -29,9 +29,10 @@ internal sealed class CheekPuffCalibrationDialog : Form
     private bool _capturing;
     private bool _captureInterrupted;
     private bool _wrongSourceSeen;
-    private float _leftNeutral;
-    private float _rightNeutral;
-    private float _leftFull;
+    private bool _legacyFeedSeen;
+    private CheekPuffPoseSummary _neutral;
+    private CheekPuffPoseSummary _leftPose;
+    private CheekPuffPoseSummary _rightPose;
 
     internal CheekPuffCalibrationDialog(string source, string fontName)
     {
@@ -67,7 +68,7 @@ internal sealed class CheekPuffCalibrationDialog : Form
         };
         var intro = new Label
         {
-            Text = $"Keep the headset on and {sourceName} connected. Start its Qpro module in VRCFaceTracking, then capture each pose for three seconds. Qpro camera tracking is not needed. Your profile is saved only after all three poses pass.",
+            Text = $"Keep the headset on and {sourceName} connected. Start its Qpro module in VRCFaceTracking, then capture four poses for three seconds each. Both native signals may rise during a single-cheek puff; calibration measures that overlap. Your profile is saved only after all four poses pass.",
             AutoSize = true, ForeColor = HubForm.Muted,
         };
         _step.Font = new Font(fontName, 12, FontStyle.Bold);
@@ -128,7 +129,8 @@ internal sealed class CheekPuffCalibrationDialog : Form
         _stepIndex = 0;
         _samples.Clear();
         _progress.Value = 0;
-        _leftNeutral = _rightNeutral = _leftFull = 0;
+        _neutral = default;
+        _leftPose = _rightPose = default;
         _result.Text = "Hold each pose comfortably. Keep your jaw relaxed and avoid smiling during the capture.";
         ShowStep();
     }
@@ -137,9 +139,10 @@ internal sealed class CheekPuffCalibrationDialog : Form
     {
         (_step.Text, _instruction.Text, _capture.Text) = _stepIndex switch
         {
-            0 => ("1 of 3 · Relax both cheeks", "Let both cheeks rest naturally. When you are steady, press Capture relaxed cheeks.", "Capture relaxed cheeks"),
-            1 => ("2 of 3 · Puff only your left cheek", "Use your own left side. Keep your right cheek relaxed, then press Capture left cheek and hold the pose.", "Capture left cheek"),
-            _ => ("3 of 3 · Puff only your right cheek", "Use your own right side. Keep your left cheek relaxed, then press Capture right cheek and hold the pose.", "Capture right cheek"),
+            0 => ("1 of 4 · Relax both cheeks", "Let both cheeks rest naturally. When you are steady, press Capture relaxed cheeks.", "Capture relaxed cheeks"),
+            1 => ("2 of 4 · Puff only your left cheek", "Use your own left side. Keep your right cheek relaxed and use a comfortable full puff, then press Capture left cheek and hold the pose.", "Capture left cheek"),
+            2 => ("3 of 4 · Puff only your right cheek", "Use your own right side. Keep your left cheek relaxed and use a comfortable full puff, then press Capture right cheek and hold the pose.", "Capture right cheek"),
+            _ => ("4 of 4 · Puff both cheeks", "Puff both cheeks together comfortably, then press Capture both cheeks and hold the pose.", "Capture both cheeks"),
         };
         _capture.Enabled = _receiver is not null && Environment.TickCount64 - _lastSampleTick <= MaximumSampleGap;
         _restart.Enabled = true;
@@ -170,21 +173,30 @@ internal sealed class CheekPuffCalibrationDialog : Form
                 IPEndPoint sender = new(IPAddress.Loopback, 0);
                 byte[] packet = _receiver.Receive(ref sender);
                 if (!IPAddress.IsLoopback(sender.Address) ||
-                    !CheekPuffTelemetry.TryParse(packet, out byte source, out float left, out float right)) continue;
+                    !CheekPuffTelemetry.TryParse(packet, out byte source, out float left, out float right, out bool raw)) continue;
                 if (source != _expectedSource)
                 {
                     _wrongSourceSeen = true;
                     continue;
                 }
+                if (!raw)
+                {
+                    _legacyFeedSeen = true;
+                    continue;
+                }
                 _lastSampleTick = Environment.TickCount64;
                 _wrongSourceSeen = false;
-                _values.Text = $"Live cheek strengths: left {left:0.000} · right {right:0.000}";
+                _legacyFeedSeen = false;
+                _values.Text = $"Live native signals: left {left:0.000} · right {right:0.000}";
                 if (_capturing)
                 {
                     if (_lastSampleTick - _lastCaptureSampleTick > MaximumSampleGap)
                         _captureInterrupted = true;
                     _lastCaptureSampleTick = _lastSampleTick;
-                    _samples.Add((left, right));
+                    // Ignore the first few frames after the click so adjusting
+                    // the pose or swallowing does not bias the saved anchors.
+                    if (_lastSampleTick - _captureStarted >= SettleMilliseconds)
+                        _samples.Add((left, right));
                 }
             }
         }
@@ -205,6 +217,7 @@ internal sealed class CheekPuffCalibrationDialog : Form
         _feedStatus.ForeColor = fresh ? HubForm.Good : HubForm.Warning;
         _feedStatus.Text = fresh ? "Live cheek feed is ready." : _wrongSourceSeen
             ? "The running Qpro module uses the other streaming app. Select its source in the Hub, or restart VRCFaceTracking with the selected module."
+            : _legacyFeedSeen ? "The running Qpro module uses the older calibration feed. Install the updated module and restart VRCFaceTracking, then try again."
             : "Waiting for live cheek values. Keep the headset on and start the selected Qpro module in VRCFaceTracking.";
         if (!_capturing) { _capture.Enabled = fresh; return; }
         if (!fresh || _captureInterrupted)
@@ -219,53 +232,43 @@ internal sealed class CheekPuffCalibrationDialog : Form
     private void FinishCapture()
     {
         _capturing = false;
-        if (_samples.Count < MinimumSamples)
+        if (!CheekPuffCalibrationCapture.TrySummarize(_samples, out CheekPuffPoseSummary pose, out string problem))
         {
-            RetryStep("There were too few fresh samples. Keep the headset connected and capture this step again.");
+            RetryStep(problem);
             return;
         }
-        float[] left = _samples.Select(sample => sample.Left).Order().ToArray();
-        float[] right = _samples.Select(sample => sample.Right).Order().ToArray();
-        float maximumSpread = _stepIndex == 0 ? 0.06f : 0.10f;
-        bool stable = _stepIndex switch
+        if (_stepIndex > 0 && !CheekPuffCalibrationCapture.TrySummarizeSteadyPuff(_samples, _neutral, _stepIndex,
+            out pose, out problem, _leftPose.LeftMedian, _rightPose.RightMedian))
         {
-            0 => Spread(left) <= maximumSpread && Spread(right) <= maximumSpread,
-            1 => Spread(left) <= maximumSpread,
-            _ => Spread(right) <= maximumSpread,
-        };
-        if (!stable)
-        {
-            RetryStep("The cheek strength changed too much during the hold. Settle into the pose, then capture this step again.");
+            RetryStep(problem);
             return;
-        }
-        if (_stepIndex > 0)
-        {
-            float activeGain = _stepIndex == 1 ? Median(left) - _leftNeutral : Median(right) - _rightNeutral;
-            float otherGain = _stepIndex == 1 ? Median(right) - _rightNeutral : Median(left) - _leftNeutral;
-            if (activeGain < CheekPuffCalibrationProfile.MinimumRange)
-            {
-                RetryStep("This cheek did not differ enough from relaxed cheeks. Use a comfortable, stronger puff on the requested side, then capture this step again.");
-                return;
-            }
-            if (otherGain >= activeGain * 0.75f)
-            {
-                RetryStep("Both cheeks puffed together. Relax the other cheek and puff only the requested side, then capture this step again.");
-                return;
-            }
         }
         if (_stepIndex == 0)
         {
-            _leftNeutral = Median(left);
-            _rightNeutral = Median(right);
-        }
-        else if (_stepIndex == 1) _leftFull = Median(left);
-        else
-        {
-            CheekPuffCalibration calibration = new(_leftNeutral, _leftFull, _rightNeutral, Median(right));
-            if (!CheekPuffCalibrationProfile.IsValid(calibration))
+            if (!CheekPuffCalibrationCapture.TryAcceptNeutral(pose, out problem))
             {
-                Restart();
-                _result.Text = "The full cheek puff did not differ enough from relaxed cheeks. Start again and use a comfortable, stronger puff on each side. Your existing profile has been kept.";
+                RetryStep(problem);
+                return;
+            }
+            _neutral = pose;
+        }
+        else if (_stepIndex < 3)
+        {
+            if (!CheekPuffCalibrationCapture.TryAcceptSide(pose, _neutral, _stepIndex == 1,
+                out _, out problem, rawInputs: true))
+            {
+                RetryStep(problem);
+                return;
+            }
+            if (_stepIndex == 1) _leftPose = pose;
+            else _rightPose = pose;
+        }
+        if (_stepIndex == 3)
+        {
+            if (!CheekPuffCalibrationCapture.TryCreateRaw(_neutral, _leftPose, _rightPose, pose,
+                out CheekPuffCalibration calibration, out problem))
+            {
+                RetryStep(problem);
                 return;
             }
             try
@@ -295,9 +298,4 @@ internal sealed class CheekPuffCalibrationDialog : Form
         ShowStep();
     }
 
-    private static float Median(float[] sorted) => sorted.Length % 2 == 0
-        ? (sorted[sorted.Length / 2 - 1] + sorted[sorted.Length / 2]) / 2
-        : sorted[sorted.Length / 2];
-
-    private static float Spread(float[] sorted) => sorted[sorted.Length * 3 / 4] - sorted[sorted.Length / 4];
 }

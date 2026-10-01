@@ -755,13 +755,13 @@ public sealed class TrackingModule : ExtTrackingModule
     {
         if (_cheekTelemetrySocket is null || nowMs < _nextCheekTelemetryTick) return;
         _nextCheekTelemetryTick = nowMs + 50;
-        // Calibration always measures Balanced strengths, even while another
-        // output mode is selected, so its anchors describe the same input that
-        // Calibrated mode later normalizes.
-        CheekPuffWeights cheeks = CheekPuffMapping.FromFaceWeights(values);
+        // Raw paired readings let personal calibration measure each cheek's
+        // response in the opposite channel. Balanced separation can erase a
+        // real moderate side lead before the capture window ever sees it.
+        CheekPuffWeights cheeks = CheekPuffMapping.RawFromFaceWeights(values);
         byte sourceId = source == NativeFaceSource.SteamLink
             ? CheekPuffTelemetry.SourceSteamLink : CheekPuffTelemetry.SourceVirtualDesktop;
-        byte[] packet = CheekPuffTelemetry.Create(sourceId, cheeks.Left, cheeks.Right);
+        byte[] packet = CheekPuffTelemetry.CreateRaw(sourceId, cheeks.Left, cheeks.Right);
         try
         {
             _cheekTelemetrySocket.Send(packet, packet.Length, CheekTelemetryEndpoint);
