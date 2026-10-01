@@ -1,10 +1,10 @@
-# QproFaceTracking V2.1.0: text setup guide
+# QproFaceTracking V2.1.2: text setup guide
 
 > **Before you start: you need a rooted Meta Quest Pro and the latest VRCFaceTracking from Steam.** This program will not work on an unrooted headset or a different Quest model. If you still need to root your Quest Pro, use [Fwooffy and glorpette's beginner root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md). Check that your headset's exact software version is supported by [Singularity](https://github.com/Lumince/singularity) before following a root guide. [Install or update VRCFaceTracking through Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/) before using Qpro's module.
 >
-> **If you used a QproFaceTracking version before V2.0, record and train your tongue model again.** Do not import a pre-V2.0 model and assume it will work correctly. Working V2.0 through V2.0.2 models can be exported and imported into V2.1.0. The developer v8 model remains the default starting point.
+> **If you used a QproFaceTracking version before V2.0, record and train your tongue model again.** Do not import a pre-V2.0 model and assume it will work correctly. Working V2.0 through V2.0.2 models can be exported and imported into V2.1.2. The developer v8 model remains the default starting point.
 
-> **This guide covers the V2.1.0 release candidate.** Virtual Desktop and Steam Link are available under **Streaming app**. Mustachio is an optional, highly experimental tongue model; start with developer v8 or your existing working model.
+> **This guide covers the V2.1.2 release candidate.** Virtual Desktop and Steam Link are available under **Streaming app**. Mustachio is an optional, highly experimental tongue model; start with developer v8 or your existing working model.
 
 Start with the headset's eye tracking, then set up the PC software. The **Hub** is the `QproFaceTracking.exe` program. **ADB** is the connection it uses to talk to your Quest. The **Qpro module** sends tracking results to VRCFaceTracking.
 
@@ -21,7 +21,7 @@ Before switching from the Magisk gaze method to the Hub's method, disable the ga
 
 ## 2. Download and open the Hub
 
-1. Download **QproFaceTracking V2.1.0.zip** when it is published on [this project's Releases page](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases), or use the supplied release candidate ZIP. Choose the named QproFaceTracking ZIP, **not** GitHub's “Source code” ZIP.
+1. Download **QproFaceTracking V2.1.2.zip** when it is published on [this project's Releases page](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/releases), or use the supplied release candidate ZIP. Choose the named QproFaceTracking ZIP, **not** GitHub's “Source code” ZIP.
 2. In Windows File Explorer, right-click the ZIP and choose **Extract All**. Open the extracted folder. Keep `QproFaceTracking.exe`, `Helpers`, and `QproRuntime` together.
 3. Double-click `QproFaceTracking.exe`. It opens on **First-time setup** the first time. You can return to that page from the menu on the left.
 
@@ -93,7 +93,7 @@ New ROCm installations use a short, shared Qpro folder under `%LOCALAPPDATA%\Qpr
 
 ## 6. Record and train your tongue model
 
-**Train if you have no personal model or used a version before V2.0. You can import a working V2.0 through V2.0.2 model into V2.1.0.** The bundled models were trained on other wearers.
+**Train if you have no personal model or used a version before V2.0. You can import a working V2.0 through V2.0.2 model into V2.1.2.** The bundled models were trained on other wearers.
 
 1. For Quick refinement or Focused training, choose the model you want to extend under **Live tracking > Tongue model** before training. Developer v8 is the default. Full dataset makes a new personal model instead.
 2. Open **Personalize** and choose a capture mode below.
@@ -114,7 +114,7 @@ To try it, choose **Mustachio** under **Live tracking > Tongue model**, then res
 
 After training, **Activity** lists the weakest held-out pose cards and diagonal corners. `missed` counts visible-tongue frames that the selected visibility gate marked hidden; `fnr` is that count divided by visible frames. These are checks on held-out frames from the same recording, so try the model live as well.
 
-The **Model manager** can export a model as a backup. Import working V2.0 through V2.0.2 exports into V2.1.0; for pre-V2.0 exports, make a new capture and train again. Camera recordings are personal data, so share them only if you want to.
+The **Model manager** can export a model as a backup. Import working V2.0 through V2.0.2 exports into V2.1.2; for pre-V2.0 exports, make a new capture and train again. Camera recordings are personal data, so share them only if you want to.
 
 To remove a recording you no longer need, stay on **Personalize**. Under its matching capture card, choose it from **Recorded datasets (including trained)** and press **Delete selected dataset…**. Read the confirmation before choosing **Yes**: this permanently removes the recording, its labels and session details, and its prepared training cache from this extracted copy. A tongue model already trained from that recording remains available in **Model manager**. The training dropdown above only lists datasets still waiting to be trained.
 
