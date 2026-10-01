@@ -278,9 +278,12 @@ function Assert-NoExternalGazeMethod {
 }
 
 function Show-GazeSetup {
-    Write-Host "Gaze firmware build: $(Invoke-Root 'getprop ro.build.version.incremental')"
-    Write-Host "Experimental eye-model selection: '$(Invoke-Root "getprop $modelProperty")'"
-    Write-Host "Social gaze filtering: '$(Invoke-Root 'getprop debug.oculus.eye_tracking.social_filtering')'"
+    $firmware = Invoke-Root 'getprop ro.build.version.incremental'
+    $selection = Invoke-Root "getprop $modelProperty"
+    $socialFiltering = Invoke-Root 'getprop debug.oculus.eye_tracking.social_filtering'
+    Write-Host "Gaze firmware build: $firmware"
+    Write-Host "Experimental eye-model selection: '$selection'"
+    Write-Host "Social gaze filtering: '$socialFiltering'"
     $journal = Read-GazeJournal
     Write-Host $(if ($null -eq $journal) { 'No recorded Qpro gaze session.' } else { 'A recorded Qpro gaze session remains. Use Recover Qpro gaze after stopping its owning Hub.' })
     $modules = @(Get-GazeModules)
@@ -290,6 +293,18 @@ function Show-GazeSetup {
     if ($mounts.Count) { Write-Host "Model/engine mounts or overlays: $($mounts -join ', '). Their absence from an individual model mount check is not proof of original tracking." }
     else { Write-Host 'No unverified model/engine submounts were found. A verified empty OverlayFS layer may remain installed.' }
     Assert-GazeServiceModel (Get-GazeFileHash $targetModel)
+    # Report observations separately from any decision about recovery. A recorded
+    # session or normal selector alone cannot prove which gaze method is active.
+    $setup = [ordered]@{
+        schema = 1
+        firmware = [string]$firmware
+        experimentalSelection = [string]$selection
+        qproSessionRecorded = ($null -ne $journal)
+        magiskGazeModules = @($modules)
+        unverifiedMounts = @($mounts)
+        socialFiltering = [string]$socialFiltering
+    }
+    Write-Host ("QPRO_GAZE_SETUP " + ($setup | ConvertTo-Json -Compress -Depth 3))
     Write-Host 'QPRO_GAZE_INSPECTION complete'
 }
 

@@ -36,6 +36,7 @@ function Reset-Fixture([string]$Original = 'false') {
     $script:ConfirmLegacyReset = $true
     $script:fixture = @{
         Journal = $null; JournalMode = '0:600'; Serial = 'FIXTUREQUEST'
+        Firmware = '51503870024400340'; SocialFiltering = ''
         Property = $Original; Mount = $false; ForeignMount = $false; ModelChanged = $false
         SourceExists = $true; SourceIdentity = '100:200'; SourceHash = ('a' * 64); OriginalHash = ('b' * 64)
         BootId = '11111111-2222-3333-4444-555555555555'; Running = $true
@@ -88,6 +89,8 @@ function Invoke-Root([string]$Command, [switch]$AllowFailure) {
         return $fixture.Journal
     }
     if ($Command -eq "stat -c '%u:%a' '$gazeJournalPath'") { return $fixture.JournalMode }
+    if ($Command -eq 'getprop ro.build.version.incremental') { return $fixture.Firmware }
+    if ($Command -eq 'getprop debug.oculus.eye_tracking.social_filtering') { return $fixture.SocialFiltering }
     if ($Command -eq 'getprop ro.boot.serialno' -or $Command -eq 'getprop ro.serialno') { return $fixture.Serial }
     if ($Command -eq 'cat /proc/sys/kernel/random/boot_id') { return $fixture.BootId }
     if ($Command -eq "getprop $modelProperty") { return $fixture.Property }
@@ -171,6 +174,54 @@ function Test-Recovery([string]$Name, [string]$Outcome, [string]$ErrorContains =
     if ($NoMutation) { Assert-Equal 0 $fixture.Mutations.Count "$Name leaves foreign/unknown state unchanged" }
     Write-Host "PASS: $Name"
 }
+
+function Test-GazeInspection([string]$Name, [bool]$RecordedSession, [int]$ModuleCount, [int]$MountCount) {
+    $output = @(& { Show-GazeSetup } 6>&1 | ForEach-Object { $_.ToString() })
+    $reports = @($output | Where-Object { $_.StartsWith('QPRO_GAZE_SETUP ') })
+    Assert-Equal 1 $reports.Count "$Name has exactly one structured report"
+    $report = $reports[0].Substring('QPRO_GAZE_SETUP '.Length) | ConvertFrom-Json
+    Assert-Equal 1 $report.schema "$Name report schema"
+    Assert-Equal $fixture.Firmware $report.firmware "$Name firmware"
+    Assert-Equal $fixture.Property $report.experimentalSelection "$Name selector remains observational"
+    Assert-Equal $fixture.SocialFiltering $report.socialFiltering "$Name social filtering"
+    Assert-Equal $RecordedSession $report.qproSessionRecorded "$Name recorded session"
+    Assert-Equal $ModuleCount @($report.magiskGazeModules).Count "$Name gaze module count"
+    Assert-Equal $MountCount @($report.unverifiedMounts).Count "$Name unverified mount count"
+    Assert-Equal $true ($reports[0] -match '"magiskGazeModules":\[') "$Name module field stays an array"
+    Assert-Equal $true ($reports[0] -match '"unverifiedMounts":\[') "$Name mount field stays an array"
+    Assert-Equal $true ($output -contains 'QPRO_GAZE_INSPECTION complete') "$Name completion marker retained"
+    Assert-Equal 'QPRO_GAZE_INSPECTION complete' $output[-1] "$Name report precedes completion"
+    Assert-Equal 0 $fixture.Mutations.Count "$Name inspection cannot change tracking"
+    Write-Host "PASS: $Name"
+    return $report
+}
+
+Reset-Fixture
+$report = Test-GazeInspection 'Normal selector without a session is reported without a stock claim' $false 0 0
+Assert-Equal $false $report.qproSessionRecorded 'No recovery record is invented'
+Reset-Fixture 'false'; $fixture.Modules = @('questpro_independent_gaze'); $fixture.SocialFiltering = '0'
+$report = Test-GazeInspection 'Magisk gaze remains visible with a false experimental selector' $false 1 0
+Assert-Equal 'questpro_independent_gaze' $report.magiskGazeModules[0] 'Detected module id is preserved'
+Reset-Fixture; Save-FixtureJournal; $fixture.Mount = $true; $fixture.Property = 'true'
+$report = Test-GazeInspection 'Recorded Qpro session and its mount are reported separately' $true 0 2
+Assert-Equal $true $report.qproSessionRecorded 'Journal presence is recorded without guessing whether it is active'
+Reset-Fixture 'true'
+$report = Test-GazeInspection 'Unrecorded experimental selector remains a legacy candidate observation' $false 0 0
+Reset-Fixture; $fixture.RootAncestor = '/odm/etc'; $fixture.ServiceAncestor = '/odm/lib64'
+$report = Test-GazeInspection 'Unverified root and service overlays are preserved in the report' $false 0 2
+Reset-Fixture; $fixture.TransparentOverlay = $true
+$report = Test-GazeInspection 'Verified empty OverlayFS does not become an unverified mount' $false 0 0
+
+Reset-Fixture; $fixture.ServiceModelChanged = $true
+$inspectionOutput = [Collections.Generic.List[string]]::new()
+try {
+    & { Show-GazeSetup } 6>&1 | ForEach-Object { $inspectionOutput.Add($_.ToString()) }
+    throw 'Mismatched service model was accepted by inspection'
+} catch { if ($_.Exception.Message -notlike '*different eye model*') { throw } }
+Assert-Equal $false (@($inspectionOutput | Where-Object { $_.StartsWith('QPRO_GAZE_SETUP ') }).Count -gt 0) 'Unverified inspection has no success payload'
+Assert-Equal $false ($inspectionOutput -contains 'QPRO_GAZE_INSPECTION complete') 'Unverified inspection cannot report completion'
+Assert-Equal 0 $fixture.Mutations.Count 'Failed inspection leaves tracking unchanged'
+Write-Host 'PASS: failed service verification cannot produce a completed inspection report'
 
 foreach ($original in @('false', 'true', '', '0', '1')) {
     Reset-Fixture $original

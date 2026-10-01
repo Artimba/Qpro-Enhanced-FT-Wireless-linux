@@ -92,6 +92,7 @@ internal sealed partial class HubForm : Form
     private bool _gazeFailureHandled;
     private volatile bool _gazeRecoveryConfirmed;
     private volatile bool _gazeInspectionConfirmed;
+    private volatile HubGazeInspection? _gazeInspectionResult;
     private volatile bool _legacyGazeResetConfirmed;
     private bool _datasetOperationBusy;
     private CancellationTokenSource? _startCancellation;

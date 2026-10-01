@@ -294,7 +294,12 @@ internal sealed partial class HubForm
         var moduleCard = SetupStepCard("2", "VRCFT module", "Choose Virtual Desktop or Steam Link. Installing one removes the other Qpro source module. Close VRCFaceTracking first.",
             _setupBridgeStatus, _setupBridgeButton, _setupSteamLinkModuleButton, _uninstallBridgeButton);
         setupCards.Controls.Add(moduleCard, 0, 1);
-        setupCards.Controls.Add(SetupStepCard("3", "Independent gaze", "Use one headset gaze method at a time. Check gaze setup reads active methods. Recover Qpro gaze restores a recorded session; Reset legacy gaze checks older unrecorded settings.", _setupGazeStatus, _setupGazeButton, _inspectGazeButton, _recoverGazeButton, _resetLegacyGazeButton), 0, 2);
+        setupCards.Controls.Add(SetupStepCard("3", "Independent gaze",
+            "Start with Check gaze setup to identify the headset's gaze method and see what to do next. Use one independent gaze method at a time.\n\n" +
+            "Recover Qpro gaze: Restores the previous eye-model state saved for a recorded Qpro session.\n" +
+            "Reset legacy gaze: Chooses normal, nonexperimental gaze selection for an older session without a record, after confirmation.\n" +
+            "Neither recovery button disables a Magisk module or uninstalls the PC module.",
+            _setupGazeStatus, _inspectGazeButton, _setupGazeButton, _recoverGazeButton, _resetLegacyGazeButton), 0, 2);
         setupLayout.Controls.Add(setupCards);
         var amdCard = Card(); amdCard.Dock = DockStyle.Top;
         amdCard.Controls.Add(SectionTitle("Optional AMD ROCm acceleration"));

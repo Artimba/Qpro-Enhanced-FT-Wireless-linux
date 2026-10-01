@@ -280,7 +280,7 @@ internal sealed partial class HubForm
         AppendLog($"The Qpro {sourceName} module is active on disk; the other Qpro source module was removed. Restart VRCFaceTracking to load it.");
         PlaySfx("succeed.wav");
         MessageBox.Show(this,
-            $"The Qpro {sourceName} module is installed. The other Qpro source module was removed.\n\nStart VRCFaceTracking, then prepare gaze from the headset if you use Qpro's independent gaze.",
+            $"The Qpro {sourceName} module is installed. The other Qpro source module was removed.\n\nStart VRCFaceTracking, then press Check gaze setup and follow its next step if you want independent gaze.",
             "Setup step complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
@@ -801,11 +801,12 @@ internal sealed partial class HubForm
     {
         if (UtilityActionIsBusy()) return;
         _gazeInspectionConfirmed = false;
+        _gazeInspectionResult = null;
         var succeeded = await RunUtilityAsync("Gaze setup check", "native-eye-local-branch-test.ps1", "-InspectOnly");
-        MessageBox.Show(this, succeeded
-            ? "Gaze setup checked. Read Activity for the enabled headset method, Qpro session and overlay details. No headset setting was changed."
-            : "The gaze setup check could not finish. Read Activity for the exact error.",
-            "Gaze setup", MessageBoxButtons.OK, succeeded ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        var result = _gazeInspectionResult;
+        MessageBox.Show(this, succeeded && result is not null ? result.PopupText() : HubGazeInspection.FailedPopupText,
+            "Gaze setup result", MessageBoxButtons.OK,
+            succeeded && result is { NeedsAttention: false } ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
     private async Task ResetLegacyGazeAsync()
@@ -901,6 +902,8 @@ internal sealed partial class HubForm
                 AppendLog($"[{label}] {line}");
                 HandleTrainingProgress(label, line);
                 if (isGazeRecovery) ObserveGazeRecovery(line, allowNoSession: true);
+                if (isGazeInspection && line.StartsWith(HubGazeInspection.Prefix, StringComparison.Ordinal))
+                    _gazeInspectionResult = HubGazeInspection.ParseLine(line);
                 if (isGazeInspection && line == "QPRO_GAZE_INSPECTION complete") _gazeInspectionConfirmed = true;
                 if (isLegacyGazeReset && line == "QPRO_GAZE_LEGACY_RESET complete") _legacyGazeResetConfirmed = true;
             }
@@ -947,6 +950,8 @@ internal sealed partial class HubForm
                 throw new InvalidOperationException("The recovery script did not confirm the Qpro session state. Check Activity before starting independent gaze.");
             if (isGazeInspection && !_gazeInspectionConfirmed || isLegacyGazeReset && !_legacyGazeResetConfirmed)
                 throw new InvalidOperationException("The gaze action did not confirm its result. Check Activity before restarting gaze.");
+            if (isGazeInspection && _gazeInspectionResult is null)
+                throw new InvalidOperationException("The gaze setup result was incomplete. Re-extract the complete ZIP and retry Check gaze setup.");
             ReloadProfiles();
             // The wireless connection script already verifies ADB and Magisk root.
             // Show its result without waiting on a second network status probe.
@@ -960,7 +965,8 @@ internal sealed partial class HubForm
                 MessageBox.Show(this,
                     "The Quest did not connect over wireless ADB. Check its current Wi-Fi IP and port, keep the headset awake, and allow Shell / ADB Shell in Magisk if prompted. See Activity for the exact error.",
                     "Quest connection failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            else
+            else if (!(script.Equals("native-eye-local-branch-test.ps1", StringComparison.OrdinalIgnoreCase) &&
+                args.Contains("-InspectOnly", StringComparer.OrdinalIgnoreCase)))
                 MessageBox.Show(this, error.Message, label + " failed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
