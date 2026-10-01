@@ -17,6 +17,7 @@ internal sealed class HubEnvironment
 {
     private readonly string _root;
     private string? _usbSerial;
+    private readonly HubAdbSession _adbSession = new();
     private readonly object _runtimeProbeLock = new();
     private readonly RuntimeProbeState _configuredRuntimeProbe = new();
     private readonly RuntimeProbeState _sharedRuntimeProbe = new();
@@ -189,39 +190,18 @@ internal sealed class HubEnvironment
         return false;
     }
 
-    internal static async Task<(bool Completed, int ExitCode, string Output)> RunAdbProbeAsync(string adb, IEnumerable<string> arguments, int timeoutSeconds = 4)
+    internal Task<(bool Completed, int ExitCode, string Output)> RunAdbProbeAsync(
+        string adb, IEnumerable<string> arguments, int timeoutSeconds = 4)
+        => _adbSession.ProbeAsync(adb, arguments, timeoutSeconds);
+
+    internal Task SuspendAdbProbesAsync() => _adbSession.SuspendProbesAsync();
+    internal void ResumeAdbProbes() => _adbSession.ResumeProbes();
+    internal async Task<(bool Completed, int ExitCode, string Output)> StopAdbServerAsync()
     {
-        try
-        {
-            var info = new ProcessStartInfo(adb)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            foreach (var argument in arguments) info.ArgumentList.Add(argument);
-            using var process = new Process { StartInfo = info };
-            if (!process.Start()) return (false, -1, "ADB could not start.");
-            var standardOutput = process.StandardOutput.ReadToEndAsync();
-            var standardError = process.StandardError.ReadToEndAsync();
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
-            try
-            {
-                await process.WaitForExitAsync(timeout.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                try { process.Kill(true); } catch { }
-                return (false, -1, "ADB timed out.");
-            }
-            var output = string.Join("\n", new[] { await standardOutput, await standardError }.Where(value => !string.IsNullOrWhiteSpace(value)));
-            return (true, process.ExitCode, output);
-        }
-        catch (Exception error)
-        {
-            return (false, -1, error.Message);
-        }
+        await _adbSession.SuspendProbesAsync();
+        var adb = FindAdb();
+        return adb is null ? (false, -1, "ADB executable is missing; server shutdown could not be confirmed.")
+            : await _adbSession.StopServerAsync(adb);
     }
 
     internal string? FindAdb()

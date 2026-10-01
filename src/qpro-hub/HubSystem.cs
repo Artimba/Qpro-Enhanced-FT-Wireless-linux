@@ -20,12 +20,12 @@ internal sealed partial class HubForm
 
     private async Task RefreshStatusAsync()
     {
-        if (_statusRefreshBusy || IsDisposed || Disposing) return;
+        if (_closingInProgress || _statusRefreshBusy || IsDisposed || Disposing) return;
         _statusRefreshBusy = true;
         try
         {
             var quest = await HasQuestAsync();
-            if (IsDisposed || Disposing) return;
+            if (_closingInProgress || IsDisposed || Disposing) return;
             var steam = Process.GetProcessesByName("vrserver").Any();
             var vrcft = Process.GetProcessesByName("VRCFaceTracking").Any();
             SetStatus(_usbStatus, quest ? StatusKind.Good : StatusKind.Bad,
@@ -116,8 +116,8 @@ internal sealed partial class HubForm
 
     private string? GetConfiguredAdbTarget() => _environment.GetConfiguredAdbTarget();
     private Task<bool> HasQuestAsync() => _environment.HasQuestAsync();
-    private static Task<(bool Completed, int ExitCode, string Output)> RunAdbProbeAsync(string adb, IEnumerable<string> arguments, int timeoutSeconds = 4)
-        => HubEnvironment.RunAdbProbeAsync(adb, arguments, timeoutSeconds);
+    private Task<(bool Completed, int ExitCode, string Output)> RunAdbProbeAsync(string adb, IEnumerable<string> arguments, int timeoutSeconds = 4)
+        => _environment.RunAdbProbeAsync(adb, arguments, timeoutSeconds);
     private string? FindAdb() => _environment.FindAdb();
     private bool BridgeInstalled() => _environment.BridgeInstalled();
     private static bool VrcftModuleProcessRunning() =>
@@ -167,24 +167,42 @@ internal sealed partial class HubForm
 
     private async void OnClosing(object? sender, FormClosingEventArgs e)
     {
-        if (!_starting && !_trackingProcesses.Any(p => !p.HasExited)) return;
         e.Cancel = true;
-        if (_closingInProgress) return;
+        if (_closingInProgress || UtilityActionIsBusy()) return;
         _closingInProgress = true;
+        Enabled = false;
         try
         {
-            await StopTrackingAsync();
-            // Startup may still be returning from its ADB check when Stop completes.
-            // Do not dispose the Hub while its continuation can launch a process.
+            await _environment.SuspendAdbProbesAsync();
+            if (_starting || _trackingProcesses.Any(p => !p.HasExited))
+                await StopTrackingAsync();
+            // Startup may still be returning from its canceled ADB check.
+            // Do not stop ADB until the tracking scripts have restored headset overrides.
             for (var attempt = 0; attempt < 200 && _starting; attempt++)
                 await Task.Delay(50);
-            if (!_starting && !_trackingProcesses.Any(p => !p.HasExited))
+            if (_starting || _trackingProcesses.Any(p => !p.HasExited))
             {
-                FormClosing -= OnClosing;
-                Close();
+                AppendLog("Hub shutdown is waiting for tracking cleanup. Stop tracking, then close the Hub again.");
+                return;
+            }
+            AppendLog("Stopping the ADB server before closing the Hub…");
+            var result = await _environment.StopAdbServerAsync();
+            AppendLog(result.Completed && result.ExitCode == 0 ? "ADB server stopped."
+                : $"ADB server shutdown could not be confirmed: {result.Output}");
+            FormClosing -= OnClosing;
+            Close();
+        }
+        catch (Exception error) { AppendLog("Hub shutdown could not finish: " + error.Message); }
+        finally
+        {
+            if (!IsDisposed && !Disposing)
+            {
+                _closingInProgress = false;
+                _environment.ResumeAdbProbes();
+                Enabled = true;
+                UpdateControlState();
             }
         }
-        finally { _closingInProgress = false; }
     }
 
     private void AppendLog(string text)

@@ -19,9 +19,17 @@ internal sealed partial class HubForm
     // Keep their child processes mutually exclusive so setup cannot replace
     // a virtual environment while a trainer is using it.
     private bool _utilityActionRunning;
+    private bool _gazeRecoveryRunning;
 
     private bool UtilityActionIsBusy()
     {
+        if (_closingInProgress) return true;
+        if (_gazeRecoveryRunning)
+        {
+            MessageBox.Show(this, "Wait for the stock eye-model recovery to finish.",
+                "Qpro is restoring tracking", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return true;
+        }
         if (!_utilityActionRunning && !_setupActionRunning && !_datasetOperationBusy)
             return false;
         MessageBox.Show(this, "Wait for the current setup, capture, or training action to finish.",
@@ -143,6 +151,7 @@ internal sealed partial class HubForm
         if (!Process.GetProcessesByName("VRCFaceTracking").Any()) missing.Add($"start VRCFaceTracking and confirm {(_environment.SteamLinkSelected ? "Steam Link" : "Virtual Desktop")} face tracking is flowing");
         else if (_environment.TrackingSourceRequiresVrcftRestart()) missing.Add("close and reopen VRCFaceTracking so its module loads the selected face-tracking source");
         if (!BackendReady()) missing.Add("run First-time setup: Set up PC runtime");
+        if (_closingInProgress) return;
         if (missing.Count > 0)
         {
             MessageBox.Show(
@@ -296,6 +305,7 @@ internal sealed partial class HubForm
             .Where(line => line.Length > 0)
             .ToArray();
         var connected = await HasQuestAsync();
+        if (_closingInProgress) return;
         if (!connection.Completed || !connected)
         {
             var stateHint = deviceLines.Any(line => line.Contains("\tunauthorized", StringComparison.OrdinalIgnoreCase))
@@ -318,6 +328,7 @@ internal sealed partial class HubForm
             ? new[] { "shell", "su", "-c", "id" }
             : new[] { "-s", target, "shell", "su", "-c", "id" };
         var root = await RunAdbProbeAsync(adb, rootArguments, 8);
+        if (_closingInProgress) return;
         if (!root.Completed || root.ExitCode != 0 || !root.Output.Contains("uid=0", StringComparison.OrdinalIgnoreCase))
         {
             PlaySfx("warning.wav");
@@ -671,7 +682,7 @@ internal sealed partial class HubForm
                 {
                     if (IsDisposed || Disposing) return;
                     AppendLog($"[{label}] exited with code {process.ExitCode}.");
-                    if (label == "Independent gaze" && !_stopping)
+                    if (label == "Independent gaze" && !_stopping && !_closingInProgress)
                     {
                         if (!_gazeStartupInProgress && !_gazeFailureHandled)
                             _ = DisableFailedGazeAsync($"The independent-gaze process stopped with code {process.ExitCode}.");
@@ -699,7 +710,8 @@ internal sealed partial class HubForm
 
     private async Task DisableFailedGazeAsync(string reason)
     {
-        if (_gazeFailureHandled || _stopping || IsDisposed || Disposing) return;
+        if (_gazeFailureHandled || _stopping || _closingInProgress || IsDisposed || Disposing) return;
+        _gazeRecoveryRunning = true;
         _gazeFailureHandled = true;
         _gaze.Checked = false;
         AppendLog($"Independent Eye Gaze disabled automatically: {reason}");
@@ -737,6 +749,11 @@ internal sealed partial class HubForm
             AppendLog("Independent gaze recovery needs attention: " + error.Message);
             if (_stopping || IsDisposed || Disposing || (_starting && _startCancellation?.IsCancellationRequested == true)) return;
             _runStatus.Text = "● Independent gaze disabled — check eye-model recovery in Activity";
+        }
+        finally
+        {
+            _gazeRecoveryRunning = false;
+            UpdateControlState();
         }
         _runStatus.ForeColor = Warning;
         UpdateControlState();
@@ -785,6 +802,7 @@ internal sealed partial class HubForm
 
     private async Task<bool> RunUtilityAsync(string label, string script, params string[] args)
     {
+        if (_closingInProgress) return false;
         if (_utilityActionRunning)
         {
             AppendLog($"{label} was not started because another setup, capture, or training action is running.");
