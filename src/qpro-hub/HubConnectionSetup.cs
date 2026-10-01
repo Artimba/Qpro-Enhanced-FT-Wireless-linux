@@ -186,51 +186,14 @@ internal sealed partial class HubForm
         return true;
     }
 
-    private string LatestRocmEnvironmentPath() => Path.Combine(_root, ".venv-rocm-experimental");
-    private string LegacyRocmEnvironmentPath() => Path.Combine(_root, ".venv-rocm");
-    private bool LatestRocmEnvironmentExists() => File.Exists(Path.Combine(LatestRocmEnvironmentPath(), "Scripts", "python.exe"));
-    private bool LegacyRocmEnvironmentExists() => File.Exists(Path.Combine(LegacyRocmEnvironmentPath(), "Scripts", "python.exe"));
-    private bool LatestRocmInstalled()
-    {
-        var marker = Path.Combine(LatestRocmEnvironmentPath(), "qpro-rocm-ready.json");
-        if (!LatestRocmEnvironmentExists() || !File.Exists(marker) || _amdGpuLatestTarget is null) return false;
-        try
-        {
-            using var ready = JsonDocument.Parse(File.ReadAllText(marker));
-            return ready.RootElement.TryGetProperty("schema", out var schema)
-                && schema.GetInt32() == 1
-                && ready.RootElement.TryGetProperty("supportTier", out var tier)
-                && tier.GetString() == "experimental-rocm-10"
-                && ready.RootElement.TryGetProperty("rocmVersion", out var version)
-                && version.GetString()?.StartsWith("10.0", StringComparison.Ordinal) == true
-                && ready.RootElement.TryGetProperty("gfxTarget", out var target)
-                && string.Equals(target.GetString(), _amdGpuLatestTarget, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
-        {
-            return false;
-        }
-    }
-
-    private bool LegacyRocmInstalled()
-    {
-        var marker = Path.Combine(LegacyRocmEnvironmentPath(), "qpro-rocm-ready.json");
-        if (!_amdGpuLegacyEligible || !LegacyRocmEnvironmentExists() || !File.Exists(marker)) return false;
-        try
-        {
-            using var ready = JsonDocument.Parse(File.ReadAllText(marker));
-            return ready.RootElement.TryGetProperty("schema", out var schema)
-                && schema.GetInt32() == 1
-                && ready.RootElement.TryGetProperty("supportTier", out var tier)
-                && tier.GetString() == "amd-windows-7.2.1"
-                && ready.RootElement.TryGetProperty("rocmVersion", out var version)
-                && version.GetString()?.StartsWith("7.2.1", StringComparison.Ordinal) == true;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException or FormatException)
-        {
-            return false;
-        }
-    }
+    private bool LatestRocmEnvironmentExists() => HubRocmRuntime.Candidates(_root, legacy: false)
+        .Any(path => File.Exists(Path.Combine(path, "Scripts", "python.exe")));
+    private bool LegacyRocmEnvironmentExists() => HubRocmRuntime.Candidates(_root, legacy: true)
+        .Any(path => File.Exists(Path.Combine(path, "Scripts", "python.exe")));
+    private bool LatestRocmInstalled() => HubRocmRuntime.Candidates(_root, legacy: false)
+        .Any(path => HubRocmRuntime.IsReady(path, legacy: false, _amdGpuLatestTarget));
+    private bool LegacyRocmInstalled() => _amdGpuLegacyEligible && HubRocmRuntime.Candidates(_root, legacy: true)
+        .Any(path => HubRocmRuntime.IsReady(path, legacy: true, _amdGpuLatestTarget));
 
     private async Task DetectAmdGpuAsync()
     {

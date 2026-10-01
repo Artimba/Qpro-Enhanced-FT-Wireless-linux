@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'runtime-python.ps1')
 $qproGpuVisibilityNames = @('HIP_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'GPU_DEVICE_ORDINAL')
 $qproSavedGpuVisibility = @{}
 foreach ($name in $qproGpuVisibilityNames) {
@@ -35,20 +36,7 @@ try {
     $python = $null
     Remove-Item Env:QPRO_ROCM_INSTALL_SMOKE_TEST -ErrorAction SilentlyContinue
     Remove-Item Env:QPRO_ROCM_EXPECTED_GFX_TARGET -ErrorAction SilentlyContinue
-    $rocmCandidates = @(
-        [pscustomobject]@{
-            Name = 'AMD ROCm 10.0'
-            Python = (Join-Path $PSScriptRoot '.venv-rocm-experimental\Scripts\python.exe')
-            ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm-experimental\qpro-rocm-ready.json')
-            TargetFamily = $null
-        },
-        [pscustomobject]@{
-            Name = 'ROCm 7.2.1 fallback'
-            Python = (Join-Path $PSScriptRoot '.venv-rocm\Scripts\python.exe')
-            ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm\qpro-rocm-ready.json')
-            TargetFamily = 'custom'
-        }
-    )
+    $rocmCandidates = @(Get-QproRocmCandidates $PSScriptRoot)
     foreach ($candidate in $rocmCandidates) {
         if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
             -not (Test-Path -LiteralPath $candidate.ReadyMarker -PathType Leaf)) { continue }
@@ -63,6 +51,7 @@ try {
         $probeSucceeded = $false
         try {
             $ErrorActionPreference = 'Continue'
+            $global:LASTEXITCODE = $null
             & $candidate.Python -c "import torch; from qpro_gpu import require_rocm_device_name; d=require_rocm_device_name(torch); print('Tongue training GPU:', torch.cuda.get_device_name(int(d.split(':')[1])), 'on', d)"
             $probeSucceeded = $LASTEXITCODE -eq 0
         } catch { Write-Warning "$($candidate.Name) validation failed: $_" }

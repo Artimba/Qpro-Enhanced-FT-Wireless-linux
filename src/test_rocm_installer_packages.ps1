@@ -8,7 +8,7 @@ $installerAst = [System.Management.Automation.Language.Parser]::ParseFile($insta
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
 
 # Load only the pure helpers, never execute setup or touch a real ROCm venv.
-foreach ($helper in @('Get-QproNormalizedGpuName', 'Get-QproRocm10Packages', 'Get-QproRocmPackageProbeCode', 'Invoke-QproRocmPythonProbe', 'Assert-QproRocmPythonProbe', 'Repair-QproRocm10HostWheels')) {
+foreach ($helper in @('Get-QproNormalizedGpuName', 'Get-QproRocm10Packages', 'Get-QproRocmPackageProbeCode', 'Invoke-QproRocmPythonProbe', 'Assert-QproRocmPythonProbe', 'Get-QproRocmPipFailure', 'Invoke-QproRocmPip', 'Repair-QproRocm10HostWheels')) {
     $functionAst = $installerAst.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $helper }, $true)
     if ($null -eq $functionAst) { throw "Missing installer helper: $helper" }
     . ([scriptblock]::Create($functionAst.Extent.Text))
@@ -115,7 +115,9 @@ function Invoke-QproFixturePip {
     $script:fixturePipCalls += ,$PipArguments
     $global:LASTEXITCODE = $script:fixturePipExit
 }
-Repair-QproRocm10HostWheels 'Invoke-QproFixturePip' $gfx1100Packages
+$fixturePython = 'C:\QproFixture\Scripts\python.exe'
+Set-Alias -Name $fixturePython -Value Invoke-QproFixturePip
+Repair-QproRocm10HostWheels $fixturePython $gfx1100Packages
 Assert-Equal 2 $script:fixturePipCalls.Count 'Targeted host repair and dependency reconciliation'
 Assert-Equal $true ($script:fixturePipCalls[0] -contains '--force-reinstall') 'Repair restores already-satisfied host files'
 Assert-Equal $true ($script:fixturePipCalls[0] -contains '--no-deps') 'Repair preserves installed device and SDK packages'
@@ -126,10 +128,10 @@ Assert-Equal $true ($script:fixturePipCalls[1] -contains 'amd-torch-device-gfx11
 $script:fixturePipCalls = @()
 $script:fixturePipExit = 1
 try {
-    Repair-QproRocm10HostWheels 'Invoke-QproFixturePip' $gfx1100Packages
+    Repair-QproRocm10HostWheels $fixturePython $gfx1100Packages
     throw 'A failed host reinstall was incorrectly accepted.'
 } catch {
-    Assert-Equal 'Repairing AMD PyTorch host wheels failed. See the package download error above.' $_.Exception.Message 'Host repair failure classification'
+    Assert-Equal 'Repairing AMD PyTorch host wheels failed. See the pip error above for the download, dependency or filesystem failure. GPU compatibility has not yet been checked.' $_.Exception.Message 'Host repair failure classification'
 }
 Assert-Equal 1 $script:fixturePipCalls.Count 'Failed host reinstall stops before dependency reconciliation'
 Write-Host 'PASS: complete target packages, damaged metadata/torchgen, targeted repair, dependency failures, legacy imports and compact GPU names'

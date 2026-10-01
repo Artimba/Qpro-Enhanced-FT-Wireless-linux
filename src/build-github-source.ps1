@@ -51,6 +51,11 @@ $sourceFiles = @(
     "setup-runtime.ps1",
     "runtime-python.ps1",
     "test_runtime_python_discovery.ps1",
+    "test_rocm_installer_packages.ps1",
+    "test_rocm_gpu_visibility.ps1",
+    "test_rocm_runtime_paths.ps1",
+    "test_gaze_recovery.ps1",
+    "test_prepare_eye_model.py",
     "prepare-eye-model.ps1",
     "prepare_eye_model.py",
     "train-latest-tongue-stills.ps1",
@@ -126,7 +131,9 @@ $sourceFiles = @(
     "tests\adb-server-readonly.py",
     "tests\live-smirk-vd.ps1",
     "tests\steam-osc\SteamOscSourceTests.csproj",
-    "tests\hub-datasets\HubDatasetTests.csproj"
+    "tests\hub-datasets\HubDatasetTests.csproj",
+    "tests\hub-rocm\HubRocmTests.csproj",
+    "tests\hub-rocm\Program.cs"
 )
 foreach ($file in $sourceFiles) { Copy-SourceFile $file }
 foreach ($hubSource in Get-ChildItem -LiteralPath (Join-Path $root "qpro-hub") -File -Filter "*.cs") {

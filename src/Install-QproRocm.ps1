@@ -1,6 +1,7 @@
 param(
     [string]$QproRoot = $PSScriptRoot,
-    [switch]$UseLegacyRocm
+    [switch]$UseLegacyRocm,
+    [string]$RocmStorageRoot = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,16 +154,46 @@ function Assert-QproRocmPythonProbe($Probe, [string]$FailureMessage) {
     if ($Probe.ExitCode -ne 0) { throw $FailureMessage }
 }
 
+function Get-QproRocmPipFailure([string]$Output, [string]$FailureMessage, [string]$EnvironmentRoot) {
+    if ($Output -match '(?i)Windows Long Path|long[ -]?path support|filename or extension is too long|WinError\s*206|Errno\s*36|File name too long') {
+        return "$FailureMessage Windows could not create a long ROCm library path in $EnvironmentRoot. Retry using a shorter Qpro-only folder with -RocmStorageRoot C:\QproRocm (choose a folder you can write to). Existing environments were kept. This is a path-length failure, not an unsupported-GPU result."
+    }
+    if ($Output -match '(?i)No matching distribution found|Could not find a version that satisfies the requirement') {
+        return "$FailureMessage The package index did not provide the requested wheel. See the exact package and index error above; this does not establish that your GPU is unsupported."
+    }
+    return "$FailureMessage See the pip error above for the download, dependency or filesystem failure. GPU compatibility has not yet been checked."
+}
+
+function Invoke-QproRocmPip([string]$Python, [string[]]$PipArguments, [string]$FailureMessage, [string]$EnvironmentRoot = '') {
+    $savedPreference = $ErrorActionPreference
+    $output = New-Object System.Collections.Generic.List[string]
+    try {
+        # Keep progress visible while retaining stderr to classify the actual
+        # failure. NativeCommandError must not hide pip's long-path hint.
+        $ErrorActionPreference = 'Continue'
+        $global:LASTEXITCODE = $null
+        & $Python -m pip @PipArguments 2>&1 | ForEach-Object {
+            $line = $_.ToString()
+            Write-Host $line
+            $output.Add($line)
+            if ($output.Count -gt 400) { $output.RemoveAt(0) }
+        }
+        $exitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $savedPreference }
+    if ($null -eq $exitCode -or $exitCode -ne 0) {
+        throw (Get-QproRocmPipFailure ($output -join "`n") $FailureMessage $EnvironmentRoot)
+    }
+}
+
 function Repair-QproRocm10HostWheels([string]$Python, [string[]]$Packages) {
     Write-Host 'Repairing damaged AMD PyTorch host wheels, including torchgen and package metadata...'
     # pip's "already satisfied" checks metadata, not files. Reinstall only
     # the host wheels once; keep the already-downloaded SDK/device packs.
-    & $Python -m pip install --disable-pip-version-check --no-cache-dir --force-reinstall --no-deps --index-url 'https://stable.repo.amd.com/rocm/whl-next/' 'torch==2.13.0+rocm10.0.0' 'torchvision==0.28.0+rocm10.0.0' 'torchaudio==2.11.0.2+rocm10.0.0'
-    if ($LASTEXITCODE -ne 0) { throw 'Repairing AMD PyTorch host wheels failed. See the package download error above.' }
+    $environmentRoot = Split-Path -Parent (Split-Path -Parent $Python)
+    Invoke-QproRocmPip $Python @('install', '--no-input', '--disable-pip-version-check', '--no-cache-dir', '--force-reinstall', '--no-deps', '--index-url', 'https://stable.repo.amd.com/rocm/whl-next/', 'torch==2.13.0+rocm10.0.0', 'torchvision==0.28.0+rocm10.0.0', 'torchaudio==2.11.0.2+rocm10.0.0') 'Repairing AMD PyTorch host wheels failed.' $environmentRoot
     # Restore dependencies that damaged host metadata may have skipped on
     # the first install, without reinstalling the large SDK/device wheels.
-    & $Python -m pip install --disable-pip-version-check --no-cache-dir --index-url 'https://stable.repo.amd.com/rocm/whl-next/' @Packages
-    if ($LASTEXITCODE -ne 0) { throw 'Installing the repaired AMD PyTorch dependencies failed.' }
+    Invoke-QproRocmPip $Python (@('install', '--no-input', '--disable-pip-version-check', '--no-cache-dir', '--index-url', 'https://stable.repo.amd.com/rocm/whl-next/') + $Packages) 'Installing the repaired AMD PyTorch dependencies failed.' $environmentRoot
 }
 $qproExperimental = -not $UseLegacyRocm
 if ($qproExperimental) {
@@ -186,17 +217,12 @@ if ($null -eq $qproAmdGpu) {
     }
     throw "No eligible discrete Radeon GPU was found ($qproDetectedNames). Ryzen integrated graphics cannot run Qpro ROCm. Qpro supports selected RX 6000, 7000 and 9000 models with an exact ROCm device package; use Install runtime for NVIDIA CUDA or CPU."
 }
-$qproGfxTarget = if ($qproExperimental) { $qproRocm10Targets[(Get-QproNormalizedGpuName $qproAmdGpu)] } else { $null }
+$qproGfxTarget = $qproRocm10Targets[(Get-QproNormalizedGpuName $qproAmdGpu)]
 $qproRocmVersion = if ($qproExperimental) { '10.0.0' } else { '7.2.1' }
-$qproRocmEnvName = if ($qproExperimental) { '.venv-rocm-experimental' } else { '.venv-rocm' }
-$qproRocmEnv = Join-Path $QproRoot $qproRocmEnvName
-$qproRocmPython = Join-Path $qproRocmEnv 'Scripts\python.exe'
-$qproReadyMarker = Join-Path $qproRocmEnv 'qpro-rocm-ready.json'
-$qproPreviousReady = $null
-if (Test-Path -LiteralPath $qproReadyMarker -PathType Leaf) {
-    try { $qproPreviousReady = Get-Content -LiteralPath $qproReadyMarker -Raw | ConvertFrom-Json }
-    catch { Write-Warning 'The previous AMD readiness record is unreadable; setup will verify the environment again.' }
-}
+. (Join-Path $QproRoot 'runtime-python.ps1')
+$qproRocmPrefix = if ($qproExperimental) { '10' } else { '721' }
+$qproRocmEnv = Get-QproRocmInstallEnvironment $qproRocmPrefix $qproGfxTarget $RocmStorageRoot
+Assert-QproRocmPathBudget $qproRocmEnv
 if ($qproExperimental) {
     Write-Host "Discrete AMD GPU detected: $($qproAmdGpu.Name) ($qproGfxTarget)."
     Write-Host 'Installing the latest stable ROCm 10.0 GPU-specific packages in a separate Qpro environment. Setup reports ready only after GPU training and inference checks pass.'
@@ -210,7 +236,6 @@ if ($qproExperimental) {
     Write-Host "Legacy ROCm 7.2.1 explicitly selected for supported discrete AMD GPU: $($qproAmdGpu.Name)"
 }
 
-. (Join-Path $QproRoot 'runtime-python.ps1')
 $qproBasePython = if (Test-QproPython312 $qproPrivatePython) {
     $qproPrivatePython
 } elseif (Test-Path -LiteralPath (Join-Path $qproSharedRuntime 'runtime-ready.json')) {
@@ -244,40 +269,21 @@ if ($qproExperimental) {
     Remove-Item Env:QPRO_ROCM_INSTALL_SMOKE_TEST -ErrorAction SilentlyContinue
 }
 $qproSiteCustomize = Join-Path $qproRocmEnv 'Lib\site-packages\sitecustomize.py'
-if (Test-Path -LiteralPath $qproSiteCustomize) {
-    throw "Remove the existing Python startup customization before continuing: $qproSiteCustomize"
+$qproReplaceCustomizedEnvironment = Test-Path -LiteralPath $qproSiteCustomize
+if ($qproReplaceCustomizedEnvironment) {
+    Write-Host 'Keeping a ROCm folder that contains an earlier GPU-discovery shim; a clean replacement will be created.'
 }
 
 & $qproBasePython -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version'
 if ($LASTEXITCODE -ne 0) { throw 'QproFaceTracking requires Python 3.12 for these AMD wheels.' }
 
-# A failed installation must not leave a stale readiness claim behind. Keep
-# the previous record long enough to recognize a different gfx target.
-if (Test-Path -LiteralPath $qproReadyMarker) {
-    Remove-Item -LiteralPath $qproReadyMarker -Force
-}
-
-$qproRecreateForBuild = $qproExperimental -and $null -ne $qproPreviousReady -and (
-    $qproPreviousReady.gfxTarget -ne $qproGfxTarget -or
-    $qproPreviousReady.rocmVersion -ne '10.0.0' -or
-    $qproPreviousReady.supportTier -ne 'experimental-rocm-10'
-)
-if (-not (Test-QproPython312 $qproRocmPython) -or $qproRecreateForBuild) {
-    if (Test-Path -LiteralPath $qproRocmEnv) {
-        if ($qproRecreateForBuild) {
-            Write-Host "Recreating the ROCm 10.0 environment for $qproGfxTarget."
-        } else {
-            Write-Host 'Repairing an AMD ROCm environment whose Python base is no longer usable.'
-        }
-        $qproExpectedEnv = [System.IO.Path]::Combine([System.IO.Path]::GetFullPath($QproRoot).TrimEnd('\'), $qproRocmEnvName)
-        if (-not [System.IO.Path]::GetFullPath($qproRocmEnv).Equals($qproExpectedEnv, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to remove a path outside the Qpro release: $qproRocmEnv"
-        }
-        Remove-Item -LiteralPath $qproRocmEnv -Recurse -Force
-    }
-    & $qproBasePython -m venv $qproRocmEnv
-    if ($LASTEXITCODE -ne 0) { throw 'Creating the separate ROCm Python environment failed.' }
-}
+$qproRocmEnv = Initialize-QproRocmEnvironment $qproRocmEnv $qproBasePython -ForceReplacement:$qproReplaceCustomizedEnvironment
+$qproRocmPython = Join-Path $qproRocmEnv 'Scripts\python.exe'
+$qproReadyMarker = Join-Path $qproRocmEnv 'qpro-rocm-ready.json'
+Write-Host "Separate Qpro ROCm environment: $qproRocmEnv"
+Write-Host 'Older extracted-release ROCm environments are kept as fallbacks; global Python and Windows path settings are unchanged.'
+# A failed installation must not leave a stale readiness claim behind.
+if (Test-Path -LiteralPath $qproReadyMarker) { Remove-Item -LiteralPath $qproReadyMarker -Force }
 
 $qproRocm10Packages = @(if ($qproExperimental) { Get-QproRocm10Packages $qproGfxTarget })
 $qproPackageProbeCode = Get-QproRocmPackageProbeCode
@@ -298,15 +304,13 @@ if (-not $qproRuntimeReady) {
 }
 
 if (-not $qproRuntimeReady) {
-    & $qproRocmPython -m pip install --disable-pip-version-check --upgrade pip
-    if ($LASTEXITCODE -ne 0) { throw 'Updating pip in the ROCm environment failed.' }
+    Invoke-QproRocmPip $qproRocmPython @('install', '--no-input', '--disable-pip-version-check', '--upgrade', 'pip') 'Updating pip in the ROCm environment failed.' $qproRocmEnv
 
     if ($qproExperimental) {
         # Exact device and family packages are required even when old torch
         # metadata would otherwise cause pip to silently skip its extras.
         Write-Host "Downloading latest stable ROCm 10.0 $qproGfxTarget PyTorch packages; this may take several gigabytes."
-        & $qproRocmPython -m pip install --disable-pip-version-check --no-cache-dir --index-url 'https://stable.repo.amd.com/rocm/whl-next/' @qproRocm10Packages
-        if ($LASTEXITCODE -ne 0) { throw "Installing AMD ROCm 10.0 $qproGfxTarget PyTorch packages failed. This device package may not be published for your card; Qpro has not changed the older ROCm environment." }
+        Invoke-QproRocmPip $qproRocmPython (@('install', '--no-input', '--disable-pip-version-check', '--no-cache-dir', '--index-url', 'https://stable.repo.amd.com/rocm/whl-next/') + $qproRocm10Packages) "Installing AMD ROCm 10.0 $qproGfxTarget PyTorch packages failed." $qproRocmEnv
     } else {
         $qproAmdSdkPackages = @(
             'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl',
@@ -314,20 +318,17 @@ if (-not $qproRuntimeReady) {
             'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl',
             'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz'
         )
-        & $qproRocmPython -m pip install --disable-pip-version-check --no-cache-dir @qproAmdSdkPackages
-        if ($LASTEXITCODE -ne 0) { throw 'Installing AMD ROCm 7.2.1 components failed.' }
+        Invoke-QproRocmPip $qproRocmPython (@('install', '--no-input', '--disable-pip-version-check', '--no-cache-dir') + $qproAmdSdkPackages) 'Installing AMD ROCm 7.2.1 components failed.' $qproRocmEnv
 
         $qproAmdTorchPackages = @(
             'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl',
             'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl',
             'https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl'
         )
-        & $qproRocmPython -m pip install --disable-pip-version-check --no-cache-dir @qproAmdTorchPackages
-        if ($LASTEXITCODE -ne 0) { throw 'Installing AMD ROCm PyTorch 2.9.1 failed.' }
+        Invoke-QproRocmPip $qproRocmPython (@('install', '--no-input', '--disable-pip-version-check', '--no-cache-dir') + $qproAmdTorchPackages) 'Installing AMD ROCm PyTorch 2.9.1 failed.' $qproRocmEnv
     }
 
-    & $qproRocmPython -m pip install --disable-pip-version-check -r $qproRequirements
-    if ($LASTEXITCODE -ne 0) { throw 'Installing QproFaceTracking Python requirements failed.' }
+    Invoke-QproRocmPip $qproRocmPython @('install', '--no-input', '--disable-pip-version-check', '-r', $qproRequirements) 'Installing QproFaceTracking Python requirements failed.' $qproRocmEnv
 
     $qproPackageProbe = Invoke-QproRocmPythonProbe $qproRocmPython $qproPackageProbeCode $qproPackageProbeArguments
     if ($qproExperimental -and $qproPackageProbe.ExitCode -eq 12) {
@@ -389,5 +390,6 @@ try {
     Remove-Item -LiteralPath $qproReadyMarker -Force -ErrorAction SilentlyContinue
     throw
 }
+Register-QproRocmEnvironment $qproRocmEnv ([bool]$UseLegacyRocm)
 Write-Host "ROCm runtime ready: $qproRocmPython"
 Write-Host 'Open QproFaceTracking.exe. Tongue tracking and training will select this ROCm runtime automatically.'

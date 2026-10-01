@@ -1,4 +1,7 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'runtime-python.ps1')
+$fixtureLocalAppData = Join-Path $PSScriptRoot 'artifacts\rocm-visibility-fixture'
+$originalLocalAppData = $env:LOCALAPPDATA
 
 # Exercise the launchers' real environment setup, candidate selection, fallback
 # and finally restoration without running Python, ADB or any installer.
@@ -17,6 +20,7 @@ function Assert-Visibility([bool]$Cleared) {
 }
 
 try {
+    $env:LOCALAPPDATA = $fixtureLocalAppData
     foreach ($launcher in @('build-and-run.ps1', 'train-latest-tongue-stills.ps1', 'train-latest-tongue-refinement.ps1')) {
         $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot $launcher) -Raw
         $tokens = $null
@@ -94,6 +98,7 @@ try {
         }
     }
 } finally {
+    $env:LOCALAPPDATA = $originalLocalAppData
     foreach ($fixtureName in $fixtureNames) {
         [Environment]::SetEnvironmentVariable($fixtureName, $originalVisibility[$fixtureName], 'Process')
     }

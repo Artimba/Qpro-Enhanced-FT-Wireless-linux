@@ -56,6 +56,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+. (Join-Path $PSScriptRoot 'runtime-python.ps1')
 $relayStarted = $false
 $relayProcess = $null
 $relayClientOutputPath = Join-Path $PSScriptRoot "questpro-relay-client-output.txt"
@@ -325,20 +326,7 @@ try {
     Remove-Item Env:QPRO_ROCM_INSTALL_SMOKE_TEST -ErrorAction SilentlyContinue
     Remove-Item Env:QPRO_ROCM_EXPECTED_GFX_TARGET -ErrorAction SilentlyContinue
     if ($TonguePreview) {
-        $rocmCandidates = @(
-            [pscustomobject]@{
-                Name = 'AMD ROCm 10.0'
-                Python = (Join-Path $PSScriptRoot '.venv-rocm-experimental\Scripts\python.exe')
-                ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm-experimental\qpro-rocm-ready.json')
-                TargetFamily = $null
-            },
-            [pscustomobject]@{
-                Name = 'ROCm 7.2.1 fallback'
-                Python = (Join-Path $PSScriptRoot '.venv-rocm\Scripts\python.exe')
-                ReadyMarker = (Join-Path $PSScriptRoot '.venv-rocm\qpro-rocm-ready.json')
-                TargetFamily = 'custom'
-            }
-        )
+        $rocmCandidates = @(Get-QproRocmCandidates $PSScriptRoot)
         foreach ($candidate in $rocmCandidates) {
             if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
                 -not (Test-Path -LiteralPath $candidate.ReadyMarker -PathType Leaf)) { continue }
@@ -352,6 +340,7 @@ try {
             else { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
             $probeSucceeded = $false
             try {
+                $global:LASTEXITCODE = $null
                 & $candidate.Python -c "import torch; from qpro_gpu import require_rocm_device_name; d=require_rocm_device_name(torch); print('Tongue model GPU:', torch.cuda.get_device_name(int(d.split(':')[1])), 'on', d)"
                 $probeSucceeded = $LASTEXITCODE -eq 0
             } catch { Write-Warning "$($candidate.Name) validation failed: $_" }
