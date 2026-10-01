@@ -4,7 +4,8 @@ param(
     [switch]$NoRestore,
     [string]$AssetRoot = "",
     [string]$VrcftInstallDir = "",
-    [string]$ExperimentalTongueModelRoot = ""
+    [string]$ExperimentalTongueModelRoot = "",
+    [string]$TestNotesPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -268,6 +269,12 @@ foreach ($document in @("LICENSE", "THIRD_PARTY_NOTICES.md", "UPSTREAM-README.md
     }
     if (-not (Test-Path -LiteralPath $documentSource)) { throw "Required document is missing: $document" }
     Copy-Item -LiteralPath $documentSource -Destination (Join-Path $docsRoot $document)
+}
+if (-not [string]::IsNullOrWhiteSpace($TestNotesPath)) {
+    if (-not (Test-Path -LiteralPath $TestNotesPath -PathType Leaf)) {
+        throw "Test build notes are missing: $TestNotesPath"
+    }
+    Copy-Item -LiteralPath $TestNotesPath -Destination (Join-Path $docsRoot "FIX_TEST_NOTES.md")
 }
 $guidePdf = Join-Path $root "Quest_Pro_Enhanced_Face_Tracking_Guide.pdf"
 if (-not (Test-Path -LiteralPath $guidePdf -PathType Leaf)) {

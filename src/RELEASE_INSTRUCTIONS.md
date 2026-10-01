@@ -76,12 +76,12 @@ To remove Qpro's VRCFaceTracking add-on later, close VRCFaceTracking, wait for i
 
 | Series | Models mapped for ROCm 10.0 |
 | --- | --- |
-| RX 6000 | 6950 XT, 6900 XT, 6800 XT, 6800; 6750 XT, 6700 XT; 6600 XT, 6600 |
+| RX 6000 | 6950 XT, 6900 XT, 6800 XT, 6800; 6750 XT, 6700 XT, 6700; 6650 XT, 6600 XT, 6600 |
 | RX 7000 | 7900 XTX, 7900 XT, 7900 GRE; 7800 XT, 7700 XT, 7700; 7600 XT, 7600 |
 | RX 9000 | 9070 XT, 9070, 9070 GRE; 9060 XT, 9060 |
 | Radeon PRO | AI PRO R9700, PRO W7900, PRO W7900 Dual Slot |
 
-Qpro installs [AMD TheRock ROCm 10.0 packages](https://github.com/ROCm/TheRock/blob/main/RELEASES.md) for the detected card's [GPU target](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html). These are AMD's stable packages, while their use in Qpro remains **experimental**. AMD's stable Windows installation guide does not explicitly list the RX 6750/6700 (gfx1031) or RX 6600 (gfx1032) device packages. Setup attempts those targets and will report a failure if a package or GPU check is unavailable. Confirm the Hub prompt and allow time for a large download. [AMD's ROCm 10.0 matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) validates Windows 11 25H2 with Adrenalin 26.8.1; other Windows 11 builds or drivers may fail the GPU checks. Qpro enables the new environment only after GPU training and model inference tests pass. Integrated graphics and unlisted Radeon models are not eligible. If setup fails, read the full **Activity** error.
+Qpro installs [AMD TheRock ROCm 10.0 packages](https://github.com/ROCm/TheRock/blob/main/RELEASES.md) for the detected card's [GPU target](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html). These are AMD's stable packages, while their use in Qpro remains **experimental**. AMD's package index includes Windows device packages for the [RX 6750/6700 family (gfx1031)](https://stable.repo.amd.com/rocm/whl-next/amd-torch-device-gfx1031/) and [RX 6650/6600 family (gfx1032)](https://stable.repo.amd.com/rocm/whl-next/amd-torch-device-gfx1032/). Package availability does not guarantee driver compatibility on every card. Confirm the Hub prompt and allow time for a large download. [AMD's ROCm 10.0 matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) validates Windows 11 25H2 with Adrenalin 26.8.1; other Windows 11 builds or drivers may fail the GPU checks. Qpro enables the new environment only after GPU training and model inference tests pass. Integrated graphics and unlisted Radeon models are not eligible. If setup fails, read the full **Activity** error.
 
 The new packages use `.venv-rocm-experimental`. This folder name preserves compatibility with earlier test builds; it does not mean AMD's packages are a preview release. If this extracted Qpro copy already has a **verified** `.venv-rocm` installation on a card in [AMD's Windows ROCm 7.2.1 list](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityrad/windows/windows_compatibility.html), Qpro keeps it as a fallback when ROCm 10.0 is not ready. The Hub shows whether 10.0 is verified or the older fallback is available. An RX 7900 XTX was live-tested with the older ROCm 7.2.1 path; the ROCm 10.0 Qpro path still needs live tests on the listed cards.
 
@@ -121,6 +121,9 @@ To remove a recording you no longer need, stay on **Personalize**. Under its mat
 3. Press **Start tracking**. Open **Activity** if you want to see whether the camera connected and which device is running the tongue model.
 4. When you finish, press **Stop tracking**. Wait until Activity says the camera has stopped and the stock eye model has been restored.
 
+Closing the Hub stops tracking cleanly, then stops the configured PC ADB server. Other Android tools using the same ADB server will disconnect and may restart it. Finish setup, capture, training, or eye-model recovery before closing.
+
+
 **Preview tracking cameras** lets you hide the camera windows without turning tracking off. Change it before starting the next session. **Pupil response** makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
 
 ### Choose your cheek puff response
@@ -139,9 +142,10 @@ Turn **Individual cheek puff** off to use the original cheek values from Virtual
 2. On **Live tracking**, press **Calibrate cheek puff**. Confirm that the window says **Live cheek feed is ready**.
 3. Relax both cheeks, press **Capture relaxed cheeks**, and hold still for three seconds.
 4. Puff only your own left cheek, keeping the right relaxed. Press **Capture left cheek** and hold for three seconds. Relax briefly afterward.
-5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds.
+5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds. Relax briefly afterward.
+6. Puff both cheeks together, press **Capture both cheeks**, and hold for three seconds.
 
-The window saves your profile after all three poses pass, then selects **Calibrated** and turns **Individual cheek puff** on. Keep your jaw comfortable and avoid smiling during the holds. If a pose is too weak, changes too much, or puffs both cheeks together, follow the message and repeat that step. A paused or mismatched feed must be fixed before you continue. Closing the window before completion keeps any existing profile.
+The window saves your profile after all four poses pass, then selects **Calibrated** and turns **Individual cheek puff** on. Keep your jaw comfortable and avoid smiling during the holds. The window reads the original cheek signals, so both numbers can rise during a one-cheek puff. Calibration measures that overlap. If a pose is too weak, too noisy, or cannot be distinguished from the other side, follow the message and repeat that step. A paused or mismatched feed must be fixed before you continue. If the window reports an older calibration feed, close VRCFaceTracking, install the matching Qpro module from this build, and reopen VRCFaceTracking before trying again. Closing the window before completion keeps any existing profile.
 
 Virtual Desktop and Steam Link have separate personal profiles. Calibrate each streaming app you use; switching back uses that app's saved profile. This is a short cheek calibration, so you do not need to record or retrain your tongue model.
 
@@ -165,6 +169,7 @@ If Independent Eye Gaze fails to start or stops unexpectedly, the Hub turns it o
 | `protocol fault` during pairing | Use a fresh six-digit code and the **temporary pairing port** shown on the Quest, not the usual `:5555` port. |
 | Wireless stopped working after a reboot | Check the Quest's current Wi-Fi address. Wireless ADB may need to be enabled again. |
 | AMD installer says PC runtime is missing | Finish **Install runtime** first, then return to **Install ROCm 10.0**. |
+| ROCm setup reports a missing `torchgen` or a failed Python import | Use **Verify / repair ROCm 10.0** or **Repair ROCm 10.0** in First-time setup. Qpro checks and repairs its separate AMD environment before testing the GPU. Keep the full **Activity** error if repair fails; an import error alone does not mean your card is unsupported. |
 | **Install runtime** stays on “Starting PC runtime setup” | Keep the Hub open and read **Activity**. It now shows the PowerShell launch, current setup phase, and a still-running message every 15 seconds when output stops. If PowerShell never prints its first script message, check Windows Security for a blocked `powershell.exe`, then share the Activity lines, including the PowerShell PID. |
 | **Install runtime** ends with code 1 | Open **Activity** and read the first error above the exit code. If it mentions a missing DLL, `VCRUNTIME`, or a Python import failure, install or repair [Microsoft's latest x64 Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170#latest-supported-redistributable-version), then reopen the Hub and run **Install runtime** again. Code 1 has other causes too, so share the full error if it repeats. Do not delete the whole `%LOCALAPPDATA%\QproFaceTracking` folder just because the exit code is 1. |
 | Steam Link source selected but no face or training labels arrive | In Steam Link **Advanced Settings**, turn on **OSC**, **Share eye tracking data**, and **Share face tracking data**; set **OSC Output Port** to **9015**. Close VRCFaceTracking and wait for its module process to exit, then press **Install Steam Link module** in the Hub. Reopen VRCFaceTracking. Remove other Steam Link VRCFaceTracking modules that would use the same port. |
