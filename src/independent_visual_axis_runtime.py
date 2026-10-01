@@ -125,6 +125,8 @@ def main() -> int:
     parser.add_argument("--output-vrcft", action="store_true")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--headless-seconds", type=float, default=0.0)
+    parser.add_argument("--no-window", action="store_true", help="Run until stopped without rendering the gaze preview")
+    parser.add_argument("--preview-fps", type=float, default=20.0)
     parser.add_argument("--sample-timeout-seconds", type=float, default=0.0)
     parser.add_argument(
         "--stop-file",
@@ -136,6 +138,8 @@ def main() -> int:
         raise ValueError("Port is outside the supported range")
     if arguments.sample_timeout_seconds < 0:
         raise ValueError("Sample timeout cannot be negative")
+    if not math.isfinite(arguments.preview_fps) or not 1 <= arguments.preview_fps <= 60:
+        raise ValueError("Preview FPS must be between 1 and 60")
 
     calibration = load_calibration(arguments.calibration)
     reader = RawTraceEyeReader(arguments.adb)
@@ -159,7 +163,9 @@ def main() -> int:
         else None
     )
     window = "Quest Pro calibrated independent gaze"
-    if deadline is None:
+    show_preview = deadline is None and not arguments.no_window
+    next_preview_at = 0.0
+    if show_preview:
         cv2.namedWindow(window, cv2.WINDOW_NORMAL)
         cv2.resizeWindow(window, 1180, 760)
 
@@ -208,10 +214,13 @@ def main() -> int:
                 rate_hz = rate_count / elapsed
                 rate_count = 0
                 rate_start = now
-            if deadline is not None:
+            # Samples and UDP output keep their native cadence. Rendering is
+            # optional and slower so a hidden preview does not consume a core.
+            if not show_preview or now < next_preview_at:
                 if not received_valid:
                     time.sleep(0.005)
                 continue
+            next_preview_at = now + 1.0 / arguments.preview_fps
 
             image = np.zeros((760, 1180, 3), dtype=np.uint8)
             put_text(image, "Quest Pro calibrated independent gaze", (24, 40),
@@ -292,7 +301,7 @@ def main() -> int:
         if broadcaster is not None:
             broadcaster.close()
         reader.close()
-        if deadline is None:
+        if show_preview:
             cv2.destroyWindow(window)
 
 

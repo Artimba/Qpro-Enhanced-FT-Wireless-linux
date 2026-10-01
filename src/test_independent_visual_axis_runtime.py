@@ -80,7 +80,20 @@ class RuntimeContractTests(unittest.TestCase):
     def test_visual_runtime_handles_valid_and_idle_loops(self):
         self.assertEqual(self._run_with_one_sample(headless=False), 0)
 
-    def _run_with_one_sample(self, *, headless: bool) -> int:
+    def test_indefinite_no_window_outputs_until_stop_and_cleans_up(self):
+        self.assertEqual(self._run_with_one_sample(headless=False, no_window=True), 0)
+
+    def test_preview_throttles_rendering_without_waiting_for_another_sample(self):
+        self.assertEqual(self._run_with_one_sample(headless=False, check_throttle=True), 0)
+
+    def test_preview_rejects_nonfinite_or_out_of_range_rate(self):
+        for rate in ("0", "61", "nan", "inf"):
+            with self.subTest(rate=rate), mock.patch.object(sys, "argv", [
+                "gaze", "--adb", "test", "--calibration", "test", "--preview-fps", rate
+            ]), self.assertRaisesRegex(ValueError, "Preview FPS"):
+                gaze_runtime.main()
+
+    def _run_with_one_sample(self, *, headless: bool, no_window: bool = False, check_throttle: bool = False) -> int:
         sample = RawEyeSample(
             pc_monotonic_ns=1,
             kernel_time_s=1.0,
@@ -97,6 +110,10 @@ class RuntimeContractTests(unittest.TestCase):
         arguments = ["gaze", "--adb", "test", "--calibration", "test"]
         if headless:
             arguments.extend(["--headless-seconds", "0.03"])
+        if no_window:
+            arguments.extend(["--no-window", "--output-vrcft", "--stop-file", "test-stop"])
+        if check_throttle:
+            arguments.extend(["--stop-file", "test-stop"])
 
         with ExitStack() as patches:
             patches.enter_context(mock.patch.object(sys, "argv", arguments))
@@ -113,12 +130,33 @@ class RuntimeContractTests(unittest.TestCase):
                 ))),
             ))
             if not headless:
-                for name in ("namedWindow", "resizeWindow", "imshow", "destroyWindow"):
-                    patches.enter_context(mock.patch.object(gaze_runtime.cv2, name))
-                patches.enter_context(mock.patch.object(gaze_runtime.cv2, "waitKey", side_effect=[-1, ord("q")]))
+                ui = {name: patches.enter_context(mock.patch.object(gaze_runtime.cv2, name))
+                      for name in ("namedWindow", "resizeWindow", "imshow", "destroyWindow", "waitKey")}
+                ui["waitKey"].side_effect = [-1, ord("q")]
                 patches.enter_context(mock.patch.object(gaze_runtime, "put_text"))
                 patches.enter_context(mock.patch.object(gaze_runtime, "gaze_panel"))
+                if no_window:
+                    patches.enter_context(mock.patch.object(gaze_runtime.Path, "exists", side_effect=[False, False, True]))
+                    broadcaster = mock.Mock()
+                    patches.enter_context(mock.patch.object(gaze_runtime, "GazeBroadcaster", return_value=broadcaster))
+                if check_throttle:
+                    patches.enter_context(mock.patch.object(gaze_runtime.Path, "exists", side_effect=[False] * 100 + [True]))
+                    # Advance one millisecond per loop, keeping this check
+                    # independent of the scheduler and physical display speed.
+                    patches.enter_context(mock.patch.object(gaze_runtime.time, "monotonic", side_effect=(i * 0.001 for i in range(110))))
+                    patches.enter_context(mock.patch.object(gaze_runtime.time, "sleep"))
+                    ui["waitKey"].side_effect = None
+                    ui["waitKey"].return_value = -1
             result = gaze_runtime.main()
+
+            if no_window:
+                for call in ui.values():
+                    call.assert_not_called()
+                broadcaster.send.assert_called_once()
+                broadcaster.close.assert_called_once_with()
+            if check_throttle:
+                self.assertGreaterEqual(ui["imshow"].call_count, 2)
+                self.assertLessEqual(ui["imshow"].call_count, 3)
 
         reader.start.assert_called_once_with()
         reader.close.assert_called_once_with()
