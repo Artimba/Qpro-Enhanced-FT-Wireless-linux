@@ -283,6 +283,8 @@ internal sealed partial class HubForm
         };
         _setupGazeButton.Click += async (_, _) => await PrepareGazeAsync();
         _recoverGazeButton.Click += async (_, _) => await RecoverGazeAsync();
+        _inspectGazeButton.Click += async (_, _) => await InspectGazeAsync();
+        _resetLegacyGazeButton.Click += async (_, _) => await ResetLegacyGazeAsync();
         // Step cards size to their copy and actions, avoiding large empty bands
         // at high resolutions and clipped descriptions in narrow windows.
         var setupCards = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 3 };
@@ -292,7 +294,7 @@ internal sealed partial class HubForm
         var moduleCard = SetupStepCard("2", "VRCFT module", "Choose Virtual Desktop or Steam Link. Installing one removes the other Qpro source module. Close VRCFaceTracking first.",
             _setupBridgeStatus, _setupBridgeButton, _setupSteamLinkModuleButton, _uninstallBridgeButton);
         setupCards.Controls.Add(moduleCard, 0, 1);
-        setupCards.Controls.Add(SetupStepCard("3", "Independent gaze", "Creates a local gaze patch from your rooted headset. Recover Qpro gaze checks an interrupted Qpro session; it leaves other Magisk modules alone.", _setupGazeStatus, _setupGazeButton, _recoverGazeButton), 0, 2);
+        setupCards.Controls.Add(SetupStepCard("3", "Independent gaze", "Use one headset gaze method at a time. Check gaze setup reads active methods. Recover Qpro gaze restores a recorded session; Reset legacy gaze checks older unrecorded settings.", _setupGazeStatus, _setupGazeButton, _inspectGazeButton, _recoverGazeButton, _resetLegacyGazeButton), 0, 2);
         setupLayout.Controls.Add(setupCards);
         var amdCard = Card(); amdCard.Dock = DockStyle.Top;
         amdCard.Controls.Add(SectionTitle("Optional AMD ROCm acceleration"));
@@ -604,7 +606,7 @@ internal sealed partial class HubForm
                     box.ItemHeight = Math.Max(Px(26), (int)Math.Ceiling(box.Font.GetHeight()) + Px(8));
                 _modelList.ItemHeight = Math.Max(Px(40), (int)Math.Ceiling(_modelList.Font.GetHeight()) + Px(12));
                 foreach (var button in new[] { _setupRuntimeButton, _setupBridgeButton, _setupSteamLinkModuleButton, _uninstallBridgeButton,
-                    _setupGazeButton, _recoverGazeButton, _setupAmdButton, _enableWirelessButton, _connectWirelessButton,
+                    _setupGazeButton, _recoverGazeButton, _inspectGazeButton, _resetLegacyGazeButton, _setupAmdButton, _enableWirelessButton, _connectWirelessButton,
                     _pairWirelessButton, _disableWirelessButton })
                     button.Height = Px(42);
             }

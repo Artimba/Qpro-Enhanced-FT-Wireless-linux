@@ -385,6 +385,8 @@ internal sealed partial class HubForm
         _uninstallBridgeButton.Enabled = enabled && BridgeUninstallAvailable();
         _setupGazeButton.Enabled = enabled;
         _recoverGazeButton.Enabled = enabled && !_gazeRecoveryRunning;
+        _inspectGazeButton.Enabled = _recoverGazeButton.Enabled;
+        _resetLegacyGazeButton.Enabled = _recoverGazeButton.Enabled;
         _enableWirelessButton.Enabled = enabled;
         _connectWirelessButton.Enabled = enabled;
         _pairWirelessButton.Enabled = enabled;
@@ -795,6 +797,32 @@ internal sealed partial class HubForm
         finally { _gazeRecoveryRunning = false; UpdateControlState(); }
     }
 
+    private async Task InspectGazeAsync()
+    {
+        if (UtilityActionIsBusy()) return;
+        _gazeInspectionConfirmed = false;
+        var succeeded = await RunUtilityAsync("Gaze setup check", "native-eye-local-branch-test.ps1", "-InspectOnly");
+        MessageBox.Show(this, succeeded
+            ? "Gaze setup checked. Read Activity for the enabled headset method, Qpro session and overlay details. No headset setting was changed."
+            : "The gaze setup check could not finish. Read Activity for the exact error.",
+            "Gaze setup", MessageBoxButtons.OK, succeeded ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+    }
+
+    private async Task ResetLegacyGazeAsync()
+    {
+        if (UtilityActionIsBusy()) return;
+        if (MessageBox.Show(this,
+            "Use this only for an older Qpro session without a recovery record. It chooses the normal, nonexperimental eye-model selection and briefly restarts headset tracking.\n\n" +
+            "An active Magisk gaze module or an unverified model overlay blocks this reset. Disable the gaze module in Magisk and reboot first if you want ordinary headset tracking.\n\n" +
+            "This does not uninstall the Qpro PC module or verify every factory setting. Continue?",
+            "Reset legacy gaze", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+        _legacyGazeResetConfirmed = false;
+        var succeeded = await RunUtilityAsync("Legacy gaze reset", "native-eye-local-branch-test.ps1", "-ResetLegacySelection", "-ConfirmLegacyReset");
+        if (succeeded) _gaze.Checked = false;
+        _runStatus.Text = succeeded ? "● Normal gaze selection checked" : "● Legacy gaze reset unconfirmed — check Activity";
+        _runStatus.ForeColor = succeeded ? Good : Warning;
+    }
+
     private void ResetInferenceStatus()
     {
         SetStatus(_inferenceStatus, StatusKind.Warning, "Idle");
@@ -853,6 +881,10 @@ internal sealed partial class HubForm
             var isRuntimeSetup = script.Equals("setup-runtime.ps1", StringComparison.OrdinalIgnoreCase);
             var isGazeRecovery = script.Equals("native-eye-local-branch-test.ps1", StringComparison.OrdinalIgnoreCase) &&
                 args.Contains("-RestoreIfActive", StringComparer.OrdinalIgnoreCase);
+            var isGazeInspection = script.Equals("native-eye-local-branch-test.ps1", StringComparison.OrdinalIgnoreCase) &&
+                args.Contains("-InspectOnly", StringComparer.OrdinalIgnoreCase);
+            var isLegacyGazeReset = script.Equals("native-eye-local-branch-test.ps1", StringComparison.OrdinalIgnoreCase) &&
+                args.Contains("-ResetLegacySelection", StringComparer.OrdinalIgnoreCase);
             if (isRuntimeSetup)
                 AppendLog($"[PC runtime setup] Launching bundled setup script from {Path.Combine(_root, script)}. Keep the Hub open; it will report when PowerShell or a download is still running.");
             var start = PowerShellStart(script, args, hidden: true);
@@ -869,6 +901,8 @@ internal sealed partial class HubForm
                 AppendLog($"[{label}] {line}");
                 HandleTrainingProgress(label, line);
                 if (isGazeRecovery) ObserveGazeRecovery(line, allowNoSession: true);
+                if (isGazeInspection && line == "QPRO_GAZE_INSPECTION complete") _gazeInspectionConfirmed = true;
+                if (isLegacyGazeReset && line == "QPRO_GAZE_LEGACY_RESET complete") _legacyGazeResetConfirmed = true;
             }
             process.OutputDataReceived += (_, e) => { if (e.Data is not null) ReportProcessLine(e.Data); };
             process.ErrorDataReceived += (_, e) => { if (e.Data is not null) ReportProcessLine(e.Data); };
@@ -911,6 +945,8 @@ internal sealed partial class HubForm
                 throw new InvalidOperationException($"{label} failed with code {process.ExitCode}. See Activity for the exact error and suggested fix.");
             if (isGazeRecovery && !_gazeRecoveryConfirmed)
                 throw new InvalidOperationException("The recovery script did not confirm the Qpro session state. Check Activity before starting independent gaze.");
+            if (isGazeInspection && !_gazeInspectionConfirmed || isLegacyGazeReset && !_legacyGazeResetConfirmed)
+                throw new InvalidOperationException("The gaze action did not confirm its result. Check Activity before restarting gaze.");
             ReloadProfiles();
             // The wireless connection script already verifies ADB and Magisk root.
             // Show its result without waiting on a second network status probe.

@@ -164,6 +164,8 @@ internal sealed partial class HubForm
         _smoothing.Enabled = _tongue.Checked && sessionEditable;
         _visibilityMode.Enabled = _tongue.Checked && sessionEditable;
         _recoverGazeButton.Enabled = sessionEditable && !_setupActionRunning && !_utilityActionRunning && !_datasetOperationBusy && !_gazeRecoveryRunning;
+        _inspectGazeButton.Enabled = _recoverGazeButton.Enabled;
+        _resetLegacyGazeButton.Enabled = _recoverGazeButton.Enabled;
         var canStart = !running && !_stopping && !_starting && !_setupActionRunning &&
             !_utilityActionRunning && !_datasetOperationBusy;
         _start.Enabled = canStart;
