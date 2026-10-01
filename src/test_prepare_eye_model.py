@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import json
 import os
 import re
@@ -25,6 +26,8 @@ from prepare_eye_model import (
     PreparationError,
     _discover_model,
     check_prepared,
+    diagnose,
+    main,
     prepare,
 )
 
@@ -81,11 +84,13 @@ class FakeQuest:
         self.model_paths = [MODEL_PATH]
         self.model = stock_archive()
         self.mounted = False
+        self.commands: list[str] = []
 
     def getprop(self, name: str) -> str:
         return self.properties[name]
 
     def root(self, command: str, *, timeout: int = 20) -> str:
+        self.commands.append(command)
         if command == "id":
             return "uid=0(root) gid=0(root)"
         if command == f"stat -c %s '{ENGINE_PATH}'":
@@ -157,6 +162,68 @@ class PrepareEyeModelTests(unittest.TestCase):
         self.quest.engine_hash = "a" * 64
         with self.assertRaisesRegex(PreparationError, "differs from supported"):
             prepare(self.quest, self.output_dir)
+
+    def test_unknown_reported_engine_stays_rejected_with_exact_build_details(self):
+        self.quest.engine_size = 44_198_016
+        self.quest.engine_hash = "96fdebc377b475df55d59f7added04c5014c4069aa1d636cf3d6f15d8fe27f1e"
+        self.quest.properties["ro.build.version.incremental"] = "unknown-v24-build"
+        self.quest.properties["ro.build.display.id"] = "unknown-v24-display"
+        with self.assertRaises(PreparationError) as caught:
+            prepare(self.quest, self.output_dir)
+        message = str(caught.exception)
+        for detail in (
+            "44198016", self.quest.engine_hash, "unknown-v24-build", "unknown-v24-display",
+            self.quest.properties["ro.build.fingerprint"], "leave Independent Eye Gaze off",
+            "No headset tracking was changed", "this exact firmware",
+        ):
+            self.assertIn(detail, message)
+        self.assertFalse((self.output_dir / PATCHED_NAME).exists())
+        self.assertFalse((self.output_dir / MANIFEST_NAME).exists())
+        self.assertNotIn(f"find {MODEL_ROOT} -type f -name bolt.ptl", self.quest.commands)
+
+    def test_diagnostic_reports_unsupported_engine_without_private_device_ids(self):
+        self.quest.engine_size = 44_198_016
+        self.quest.engine_hash = "9" * 64
+        report = diagnose(self.quest)
+        self.assertFalse(report["engineSupported"])
+        self.assertEqual(report["engine"]["size"], self.quest.engine_size)
+        self.assertEqual(report["engine"]["sha256"], self.quest.engine_hash)
+        self.assertEqual(report["modelPath"], MODEL_PATH)
+        self.assertFalse(report["headsetTrackingChanged"])
+        self.assertFalse(report["modelPatchValidated"])
+        serialized = json.dumps(report)
+        self.assertNotIn(self.quest.serial, serialized)
+        self.assertNotIn(self.quest.properties["ro.boot.serialno"], serialized)
+        self.assertEqual(list(self.output_dir.iterdir()), [])
+        self.assertTrue(all(
+            command == "id" or command.startswith(("stat -c %s ", "sha256sum ", "find ", "cat /proc/mounts"))
+            for command in self.quest.commands
+        ))
+
+    def test_diagnostic_distinguishes_engine_support_from_model_readiness(self):
+        self.quest.model_paths = [STANDARD_MODEL_PATH, PREVIOUS_MODEL_PATH]
+        report = diagnose(self.quest)
+        self.assertTrue(report["engineSupported"])
+        self.assertEqual(report["engine"]["profile"], ENGINE_PROFILES[1]["profile"])
+        self.assertIn("ambiguous", report["modelDiscoveryError"])
+        self.assertIsNone(report["modelPath"])
+        self.assertFalse(report["modelPatchValidated"])
+
+    def test_cli_diagnostic_completes_without_enabling_unsupported_gaze(self):
+        self.quest.engine_size = 44_198_016
+        with mock.patch("prepare_eye_model.AdbClient", return_value=self.quest), mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(main(["--diagnose", "--adb", "adb.exe"]), 0)
+        report = json.loads(output.getvalue())
+        self.assertFalse(report["engineSupported"])
+        self.assertFalse(report["headsetTrackingChanged"])
+        self.assertEqual(list(self.output_dir.iterdir()), [])
+
+    def test_diagnostic_is_not_a_preparation_bypass(self):
+        with mock.patch("sys.stderr", new_callable=io.StringIO) as output:
+            with self.assertRaises(SystemExit) as caught:
+                main(["--diagnose", "--check-prepared"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("not allowed with argument", output.getvalue())
 
     def test_rejects_old_size_on_unknown_build(self):
         self.quest.engine_size = ENGINE_PROFILES[0]["size"]

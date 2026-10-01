@@ -170,25 +170,47 @@ def _device_identity(client: AdbClient) -> dict[str, str]:
     return identity
 
 
-def _engine_identity(client: AdbClient, device: dict[str, str]) -> dict[str, Any]:
+def _read_engine_identity(client: AdbClient) -> dict[str, Any]:
     output = client.root(f"stat -c %s '{ENGINE_PATH}'")
     try:
         size = int(output.splitlines()[-1].strip())
     except (IndexError, ValueError) as error:
         raise PreparationError("Could not read the headset tracking-engine size.") from error
-    digest = _read_hash(client, ENGINE_PATH)
+    return {"path": ENGINE_PATH, "size": size, "sha256": _read_hash(client, ENGINE_PATH)}
+
+
+def _engine_failure(detail: str, device: dict[str, str]) -> PreparationError:
+    # The consumer needs its own validated native probe layout. Matching the
+    # model graph alone cannot establish the engine's address/register layout.
+    firmware = (
+        f"build {device['buildIncremental']}; display {device['buildDisplayId']}; "
+        f"fingerprint {device['buildFingerprint']}"
+    )
+    return PreparationError(
+        f"{detail} Firmware: {firmware}. "
+        "The Hub's independent gaze is unavailable for this build; leave Independent Eye Gaze off. "
+        "No headset tracking was changed. Check a Magisk gaze module's support for this exact "
+        "firmware before using it, and use one gaze method at a time as described in the setup guide."
+    )
+
+
+def _validate_engine_identity(engine: dict[str, Any], device: dict[str, str]) -> dict[str, Any]:
+    size = engine["size"]
+    digest = engine["sha256"]
     candidates = [profile for profile in ENGINE_PROFILES if profile["size"] == size]
     if len(candidates) != 1:
-        raise PreparationError(
+        raise _engine_failure(
             f"Unsupported tracking-engine size {size} and SHA-256 {digest}. "
-            "This firmware needs its own validated eye profile."
+            "This firmware needs its own validated eye profile.",
+            device,
         )
     profile = candidates[0]
     expected_hash = profile["sha256"]
     if expected_hash is not None and digest != expected_hash:
-        raise PreparationError(
+        raise _engine_failure(
             f"Tracking-engine SHA-256 {digest} differs from supported "
-            f"profile {profile['profile']} ({expected_hash})."
+            f"profile {profile['profile']} ({expected_hash}).",
+            device,
         )
     if expected_hash is None:
         # The older runtime profile has only a validated binary size. Constrain
@@ -199,11 +221,16 @@ def _engine_identity(client: AdbClient, device: dict[str, str]) -> dict[str, Any
             device["buildDisplayId"],
         )
         if not any(re.search(rf"(?<!\d){profile['profile']}(?!\d)", value) for value in build_values):
-            raise PreparationError(
+            raise _engine_failure(
                 f"Tracking-engine size {size} belongs to an older profile without "
-                f"a pinned hash, but the reported build is not {profile['profile']}."
+                f"a pinned hash, but the reported build is not {profile['profile']}.",
+                device,
             )
-    return {"path": ENGINE_PATH, "size": size, "sha256": digest, "profile": profile["profile"]}
+    return {**engine, "profile": profile["profile"]}
+
+
+def _engine_identity(client: AdbClient, device: dict[str, str]) -> dict[str, Any]:
+    return _validate_engine_identity(_read_engine_identity(client), device)
 
 
 def _discover_model(client: AdbClient) -> str:
@@ -247,6 +274,47 @@ def inspect_headset(client: AdbClient) -> tuple[dict[str, str], dict[str, Any], 
     engine = _engine_identity(client, device)
     model_path = _discover_model(client)
     return device, engine, model_path, _is_mounted(client, model_path)
+
+
+def diagnose(client: AdbClient) -> dict[str, Any]:
+    """Report compatibility metadata without copying models or changing tracking.
+
+    Firmware identity and engine hashes are enough to identify a new build.
+    Omit hardware/ADB serials so the output can be shared without those IDs.
+    This deliberately does not claim that a discovered model graph is valid.
+    """
+    if "uid=0(root)" not in client.root("id"):
+        raise PreparationError("Grant Magisk Superuser access to Shell / ADB Shell, then retry.")
+    device = _device_identity(client)
+    engine = _read_engine_identity(client)
+    reason = None
+    try:
+        engine = _validate_engine_identity(engine, device)
+    except PreparationError as error:
+        reason = str(error)
+    model_path = None
+    mounted = None
+    model_error = None
+    try:
+        model_path = _discover_model(client)
+        mounted = _is_mounted(client, model_path)
+    except PreparationError as error:
+        model_error = str(error)
+    return {
+        "format": "qpro-gaze-compatibility-diagnostic-v1",
+        "firmware": {
+            key: device[key]
+            for key in ("model", "productDevice", "buildIncremental", "buildDisplayId", "buildFingerprint")
+        },
+        "engine": engine,
+        "engineSupported": reason is None,
+        "engineCompatibilityReason": reason,
+        "modelPath": model_path,
+        "modelPathMounted": mounted,
+        "modelDiscoveryError": model_error,
+        "modelPatchValidated": False,
+        "headsetTrackingChanged": False,
+    }
 
 
 def prepare(client: AdbClient, output_dir: Path = OUTPUT_DIR) -> dict[str, Any]:
@@ -350,11 +418,15 @@ def check_prepared(client: AdbClient, output_dir: Path = OUTPUT_DIR) -> dict[str
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--adb", default="adb", help="ADB executable path")
-    parser.add_argument("--check-prepared", action="store_true", help="Verify this PC model against the connected headset")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--check-prepared", action="store_true", help="Verify this PC model against the connected headset")
+    modes.add_argument("--diagnose", action="store_true", help="Print shareable firmware/engine metadata without changing headset tracking")
     arguments = parser.parse_args(argv)
     try:
         client = AdbClient(arguments.adb)
-        if arguments.check_prepared:
+        if arguments.diagnose:
+            print(json.dumps(diagnose(client), indent=2), flush=True)
+        elif arguments.check_prepared:
             manifest = check_prepared(client)
             print(f"Prepared independent gaze verified for {manifest['device']['serial']} ({manifest['engine']['profile']}).")
         else:
