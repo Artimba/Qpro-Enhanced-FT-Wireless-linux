@@ -104,7 +104,7 @@ internal sealed class SteamOscSource : IDisposable
 
     internal void Poll()
     {
-        for (int i = 0; i < MaxDatagramsPerPoll && _socket.Available > 0; i++)
+        for (int i = 0; i < MaxDatagramsPerPoll && _socket.Client.Poll(0, SelectMode.SelectRead); i++)
         {
             IPEndPoint sender = new(IPAddress.Loopback, 0);
             byte[] datagram;
@@ -128,6 +128,20 @@ internal sealed class SteamOscSource : IDisposable
                 RejectedDatagrams++;
         }
         ExpireWeights(Environment.TickCount64);
+    }
+
+    internal bool DiscardPending()
+    {
+        bool drained = LocalDatagrams.DiscardPending(_socket);
+        Array.Clear(_expressions);
+        Array.Clear(_expressionTicks);
+        Array.Clear(_rawEyeCoordinates);
+        Array.Clear(_rawEyeTicks);
+        _lastCanonicalTongueTick = _lastCombinedGazeTick = 0;
+        LastFaceTick = LastEyeTick = LastGazeTick = 0;
+        LastLowerFaceCapabilityTick = LastUpperFaceCapabilityTick = 0;
+        LowerFaceAvailable = UpperFaceAvailable = null;
+        return drained;
     }
 
     internal bool TryGetCombinedGaze(long now, out float x, out float y, long maxAgeMs = DefaultFreshMs)

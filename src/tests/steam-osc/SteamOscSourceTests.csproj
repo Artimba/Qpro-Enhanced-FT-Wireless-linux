@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../vrcft-gaze-bridge/SteamOscSource.cs" Link="SteamOscSource.cs" />
+    <Compile Include="../../vrcft-gaze-bridge/LiveOverlayState.cs" Link="LiveOverlayState.cs" />
     <Compile Include="../../vrcft-gaze-bridge/NativeTongueMapping.cs" Link="NativeTongueMapping.cs" />
     <Compile Include="../../vrcft-gaze-bridge/NativeLipMapping.cs" Link="NativeLipMapping.cs" />
     <Compile Include="../../vrcft-gaze-bridge/CheekPuffMapping.cs" Link="CheekPuffMapping.cs" />

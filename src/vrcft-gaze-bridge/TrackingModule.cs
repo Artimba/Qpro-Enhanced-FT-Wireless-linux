@@ -8,6 +8,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Qpro.Shared;
 using VRCFaceTracking;
+using VRCFaceTracking.Core.Library;
 using VRCFaceTracking.Core.Params.Expressions;
 
 namespace Qpro.GazeBridge;
@@ -99,18 +100,20 @@ public sealed class TrackingModule : ExtTrackingModule
     private readonly SmirkTracker _smirkTracker = new();
     private EyebrowSettings _eyebrowSettings = EyebrowPreference.Default;
     private long _nextEyebrowSettingsCheckTick;
-    private long _lastGazeTick;
+    private readonly Func<long> _tickClock;
+    private readonly string _mapName;
+    private bool _wasActive;
+    private readonly LiveOverlayState _leftGazeOverlay = new(GazeTimeoutMs);
+    private readonly LiveOverlayState _rightGazeOverlay = new(GazeTimeoutMs);
+    private readonly LiveOverlayState _tongueOverlay = new(TongueTimeoutMs);
+    private readonly LiveOverlayState _leftPupilOverlay = new(PupilTimeoutMs);
+    private readonly LiveOverlayState _rightPupilOverlay = new(PupilTimeoutMs);
     private float _leftGazeX;
     private float _leftGazeY;
     private float _rightGazeX;
     private float _rightGazeY;
-    private byte _gazeFlags;
     private readonly float[] _tongueValues = new float[NativeTongueMapping.SlotCount];
-    private bool _tongueEnabled;
     private bool _tongueDirty;
-    private long _lastTongueTick;
-    private long _lastPupilTick;
-    private byte _pupilFlags;
     private float _leftPupilMm;
     private float _rightPupilMm;
 
@@ -118,12 +121,22 @@ public sealed class TrackingModule : ExtTrackingModule
     // source and overlays fresh Qpro gaze, tongue, and pupil packets.
     public override (bool SupportsEye, bool SupportsExpression) Supported => (true, true);
 
+    public TrackingModule() : this(() => Environment.TickCount64) { }
+
+    internal TrackingModule(Func<long> tickClock, string mapName = MapName)
+    {
+        _tickClock = tickClock;
+        _mapName = mapName;
+    }
+
     public override (bool eyeSuccess, bool expressionSuccess) Initialize(
         bool eyeAvailable,
         bool expressionAvailable)
     {
         _needsEye = eyeAvailable;
         _needsExpression = expressionAvailable;
+        ResetOverlayState();
+        _wasActive = false;
         _useSteamLink = ReadSteamLinkSelection();
         _cheekPuffTracker.Reset();
         _nextCheekPuffModeCheckTick = 0;
@@ -206,6 +219,24 @@ public sealed class TrackingModule : ExtTrackingModule
 
     public override void Update()
     {
+        if (Status != ModuleState.Active)
+        {
+            DiscardInactivePackets();
+            _wasActive = false;
+            Thread.Sleep(10);
+            return;
+        }
+        if (!_wasActive)
+        {
+            // Packets queued while another module owned the slots must not
+            // become fresh merely because this module was activated again.
+            _wasActive = DiscardInactivePackets();
+            if (!_wasActive)
+            {
+                Thread.Sleep(5);
+                return;
+            }
+        }
         ReceiveGaze();
         ReceiveTongue();
         ReceivePupil();
@@ -217,6 +248,7 @@ public sealed class TrackingModule : ExtTrackingModule
         }
         if (!TryReadState())
         {
+            UpdateUnavailableSource();
             Thread.Sleep(10);
             return;
         }
@@ -225,20 +257,29 @@ public sealed class TrackingModule : ExtTrackingModule
         for (int index = 0; index < ExpressionCount; ++index)
             expressions[index] = BitConverter.ToSingle(_second, ExpressionOffset + index * 4);
 
-        if (_second[1] != 0)
-            PublishCheekCalibrationSample(expressions, NativeFaceSource.VirtualDesktop, Environment.TickCount64);
+        byte faceFlags = _second[0];
+        bool lowerFaceAvailable = (faceFlags & 1) != 0;
+        if (lowerFaceAvailable)
+            PublishCheekCalibrationSample(expressions, NativeFaceSource.VirtualDesktop, _tickClock());
 
         if (_needsEye)
             UpdateEyes(expressions);
         if ((_needsEye || _needsExpression) && _second[1] != 0)
             UpdateBrowExpressions(expressions);
-        if (_needsExpression && _second[1] != 0)
-            UpdateMouth(expressions, _second[1], NativeFaceSource.VirtualDesktop);
+        if (_needsExpression)
+        {
+            if (lowerFaceAvailable)
+                UpdateMouth(expressions, faceFlags, NativeFaceSource.VirtualDesktop);
+            else
+                UpdateTongueOutput(expressions, faceFlags, NativeFaceSource.VirtualDesktop, nativeAvailable: false);
+        }
         Thread.Sleep(5);
     }
 
     public override void Teardown()
     {
+        ResetOverlayState();
+        _wasActive = false;
         _smirkTracker.Reset();
         _cheekPuffTracker.Reset();
         _gazeSocket?.Dispose();
@@ -265,7 +306,7 @@ public sealed class TrackingModule : ExtTrackingModule
             return;
         try
         {
-            _map = MemoryMappedFile.OpenExisting(MapName, MemoryMappedFileRights.Read);
+            _map = MemoryMappedFile.OpenExisting(_mapName, MemoryMappedFileRights.Read);
             _view = _map.CreateViewAccessor(0, StateBytes, MemoryMappedFileAccess.Read);
         }
         catch (FileNotFoundException)
@@ -314,7 +355,7 @@ public sealed class TrackingModule : ExtTrackingModule
         if (_steamSource is null)
             return;
         _steamSource.Poll();
-        long now = Environment.TickCount64;
+        long now = _tickClock();
         bool faceFresh = _steamSource.HasFreshFace(now, SteamFaceTimeoutMs);
         ReadOnlySpan<float> expressions = _steamSource.Expressions;
         bool upperFaceAvailable = faceFresh && _steamSource.HasAvailableUpperFace(now, SteamFaceTimeoutMs);
@@ -332,7 +373,7 @@ public sealed class TrackingModule : ExtTrackingModule
         if (_needsEye || _needsExpression)
             UpdateBrowExpressions(upperValues);
         if (_needsExpression)
-            UpdateMouth(lowerValues, 3, NativeFaceSource.SteamLink);
+            UpdateMouth(lowerValues, 3, NativeFaceSource.SteamLink, lowerFaceAvailable);
         if (faceFresh)
             PublishSteamLabels(now, expressions);
     }
@@ -373,45 +414,20 @@ public sealed class TrackingModule : ExtTrackingModule
 
     private void UpdateSteamEyes(ReadOnlySpan<float> values, long now)
     {
-        bool customFresh = _lastGazeTick != 0 && now - _lastGazeTick <= GazeTimeoutMs;
         float leftX = 0, leftY = 0, rightX = 0, rightY = 0;
         bool steamGazeFresh = _steamSource is not null &&
             _steamSource.HasFreshGaze(now, SteamFaceTimeoutMs) &&
             _steamSource.TryGetGaze(now, out leftX, out leftY,
                 out rightX, out rightY);
 
-        if (customFresh && (_gazeFlags & 1) != 0)
-        {
-            UnifiedTracking.Data.Eye.Left.Gaze.x = _leftGazeX;
-            UnifiedTracking.Data.Eye.Left.Gaze.y = _leftGazeY;
-        }
-        else if (steamGazeFresh)
-        {
-            UnifiedTracking.Data.Eye.Left.Gaze.x = leftX;
-            UnifiedTracking.Data.Eye.Left.Gaze.y = leftY;
-        }
-        if (customFresh && (_gazeFlags & 2) != 0)
-        {
-            UnifiedTracking.Data.Eye.Right.Gaze.x = _rightGazeX;
-            UnifiedTracking.Data.Eye.Right.Gaze.y = _rightGazeY;
-        }
-        else if (steamGazeFresh)
-        {
-            UnifiedTracking.Data.Eye.Right.Gaze.x = rightX;
-            UnifiedTracking.Data.Eye.Right.Gaze.y = rightY;
-        }
+        UpdateGazeOutput(now, left: true, steamGazeFresh, leftX, leftY);
+        UpdateGazeOutput(now, left: false, steamGazeFresh, rightX, rightY);
 
         UnifiedTracking.Data.Eye.Left.Openness = 1.0f - Math.Clamp(
             values[12] + values[12] * values[28], 0.0f, 1.0f);
         UnifiedTracking.Data.Eye.Right.Openness = 1.0f - Math.Clamp(
             values[13] + values[13] * values[29], 0.0f, 1.0f);
-        bool pupilFresh = _lastPupilTick != 0 && now - _lastPupilTick <= PupilTimeoutMs;
-        UnifiedTracking.Data.Eye.Left.PupilDiameter_MM =
-            pupilFresh && (_pupilFlags & 1) != 0 ? _leftPupilMm : 5.0f;
-        UnifiedTracking.Data.Eye.Right.PupilDiameter_MM =
-            pupilFresh && (_pupilFlags & 2) != 0 ? _rightPupilMm : 5.0f;
-        UnifiedTracking.Data.Eye._minDilation = 2.0f;
-        UnifiedTracking.Data.Eye._maxDilation = 8.0f;
+        UpdatePupilOutput(now, nativeAvailable: true);
         UpdateEyeExpressions(values);
     }
 
@@ -483,21 +499,22 @@ public sealed class TrackingModule : ExtTrackingModule
             return;
         try
         {
-            while (_gazeSocket.Available >= GazePacketBytes)
+            foreach (byte[] packet in LocalDatagrams.ReadPending(_gazeSocket))
             {
-                IPEndPoint sender = new(IPAddress.Loopback, 0);
-                byte[] packet = _gazeSocket.Receive(ref sender);
                 if (packet.Length != GazePacketBytes ||
                     packet[0] != (byte)'Q' || packet[1] != (byte)'P' ||
                     packet[2] != (byte)'G' || packet[3] != (byte)'E' ||
                     packet[4] != 1)
                     continue;
-                _gazeFlags = packet[5];
                 _leftGazeX = ReadFloat(packet, 8);
                 _leftGazeY = ReadFloat(packet, 12);
                 _rightGazeX = ReadFloat(packet, 16);
                 _rightGazeY = ReadFloat(packet, 20);
-                _lastGazeTick = Environment.TickCount64;
+                long now = _tickClock();
+                _leftGazeOverlay.Receive(now, (packet[5] & 1) != 0 &&
+                    float.IsFinite(_leftGazeX) && float.IsFinite(_leftGazeY));
+                _rightGazeOverlay.Receive(now, (packet[5] & 2) != 0 &&
+                    float.IsFinite(_rightGazeX) && float.IsFinite(_rightGazeY));
             }
         }
         catch (SocketException error) when (
@@ -512,20 +529,22 @@ public sealed class TrackingModule : ExtTrackingModule
             return;
         try
         {
-            while (_tongueSocket.Available >= TonguePacketBytes)
+            foreach (byte[] packet in LocalDatagrams.ReadPending(_tongueSocket))
             {
-                IPEndPoint sender = new(IPAddress.Loopback, 0);
-                byte[] packet = _tongueSocket.Receive(ref sender);
                 if (packet.Length != TonguePacketBytes ||
                     packet[0] != (byte)'Q' || packet[1] != (byte)'P' ||
                     packet[2] != (byte)'T' || packet[3] != (byte)'O' ||
                     packet[4] != 1)
                     continue;
-                _tongueEnabled = (packet[5] & 1) != 0;
+                bool valid = true;
                 for (int index = 0; index < _tongueValues.Length; ++index)
-                    _tongueValues[index] = Math.Clamp(ReadFloat(packet, 8 + index * 4), 0.0f, 1.0f);
+                {
+                    float value = ReadFloat(packet, 8 + index * 4);
+                    valid &= float.IsFinite(value);
+                    _tongueValues[index] = float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 0.0f;
+                }
                 _tongueDirty = true;
-                _lastTongueTick = Environment.TickCount64;
+                _tongueOverlay.Receive(_tickClock(), (packet[5] & 1) != 0 && valid);
             }
         }
         catch (SocketException error) when (
@@ -540,25 +559,22 @@ public sealed class TrackingModule : ExtTrackingModule
             return;
         try
         {
-            while (_pupilSocket.Available >= PupilPacketBytes)
+            foreach (byte[] packet in LocalDatagrams.ReadPending(_pupilSocket))
             {
-                IPEndPoint sender = new(IPAddress.Loopback, 0);
-                byte[] packet = _pupilSocket.Receive(ref sender);
                 if (packet.Length != PupilPacketBytes ||
                     packet[0] != (byte)'Q' || packet[1] != (byte)'P' ||
                     packet[2] != (byte)'D' || packet[3] != (byte)'I' ||
                     packet[4] != 1)
                     continue;
-                _pupilFlags = (byte)(packet[5] & 3);
                 float left = ReadFloat(packet, 8);
                 float right = ReadFloat(packet, 12);
-                if (!float.IsFinite(left) || left < 2.0f || left > 9.0f)
-                    _pupilFlags &= 0b10;
-                if (!float.IsFinite(right) || right < 2.0f || right > 9.0f)
-                    _pupilFlags &= 0b01;
+                long now = _tickClock();
+                _leftPupilOverlay.Receive(now, (packet[5] & 1) != 0 &&
+                    float.IsFinite(left) && left is >= 2.0f and <= 9.0f);
+                _rightPupilOverlay.Receive(now, (packet[5] & 2) != 0 &&
+                    float.IsFinite(right) && right is >= 2.0f and <= 9.0f);
                 _leftPupilMm = left;
                 _rightPupilMm = right;
-                _lastPupilTick = Environment.TickCount64;
             }
         }
         catch (SocketException error) when (
@@ -571,32 +587,11 @@ public sealed class TrackingModule : ExtTrackingModule
     {
         bool leftValid = _second[292] != 0;
         bool rightValid = _second[293] != 0;
-        long now = Environment.TickCount64;
-        bool customFresh = _lastGazeTick != 0 &&
-            now - _lastGazeTick <= GazeTimeoutMs;
-
-        if (customFresh && (_gazeFlags & 1) != 0)
-        {
-            UnifiedTracking.Data.Eye.Left.Gaze.x = _leftGazeX;
-            UnifiedTracking.Data.Eye.Left.Gaze.y = _leftGazeY;
-        }
-        else if (leftValid)
-        {
-            (float x, float y) = QuaternionToCartesian(_second, 296);
-            UnifiedTracking.Data.Eye.Left.Gaze.x = x;
-            UnifiedTracking.Data.Eye.Left.Gaze.y = y;
-        }
-        if (customFresh && (_gazeFlags & 2) != 0)
-        {
-            UnifiedTracking.Data.Eye.Right.Gaze.x = _rightGazeX;
-            UnifiedTracking.Data.Eye.Right.Gaze.y = _rightGazeY;
-        }
-        else if (rightValid)
-        {
-            (float x, float y) = QuaternionToCartesian(_second, 324);
-            UnifiedTracking.Data.Eye.Right.Gaze.x = x;
-            UnifiedTracking.Data.Eye.Right.Gaze.y = y;
-        }
+        long now = _tickClock();
+        (float leftX, float leftY) = leftValid ? QuaternionToCartesian(_second, 296) : default;
+        (float rightX, float rightY) = rightValid ? QuaternionToCartesian(_second, 324) : default;
+        UpdateGazeOutput(now, left: true, leftValid, leftX, leftY);
+        UpdateGazeOutput(now, left: false, rightValid, rightX, rightY);
 
         // Blink drives closure. A smile can raise the cheeks and tighten the
         // lids without actually closing either eye.
@@ -604,17 +599,10 @@ public sealed class TrackingModule : ExtTrackingModule
             values[12] + values[12] * values[28], 0.0f, 1.0f);
         UnifiedTracking.Data.Eye.Right.Openness = 1.0f - Math.Clamp(
             values[13] + values[13] * values[29], 0.0f, 1.0f);
-        bool pupilFresh = _lastPupilTick != 0 &&
-            Environment.TickCount64 - _lastPupilTick <= PupilTimeoutMs;
-        UnifiedTracking.Data.Eye.Left.PupilDiameter_MM =
-            pupilFresh && (_pupilFlags & 1) != 0 ? _leftPupilMm : 5.0f;
-        UnifiedTracking.Data.Eye.Right.PupilDiameter_MM =
-            pupilFresh && (_pupilFlags & 2) != 0 ? _rightPupilMm : 5.0f;
         // VRCFT normalizes combined dilation using these limits. The relative
         // camera estimate eases from 2 to 8 with neutral at 5, so use the
         // same range to make VRChat's 0..1 animation respond visibly.
-        UnifiedTracking.Data.Eye._minDilation = 2.0f;
-        UnifiedTracking.Data.Eye._maxDilation = 8.0f;
+        UpdatePupilOutput(now, nativeAvailable: true);
 
         if (_second[1] != 0)
             UpdateEyeExpressions(values);
@@ -644,10 +632,11 @@ public sealed class TrackingModule : ExtTrackingModule
         Set((int)UnifiedExpressions.BrowOuterUpRight, brow.OuterRight);
     }
 
-    private void UpdateMouth(ReadOnlySpan<float> values, byte faceFlags, NativeFaceSource source)
+    private void UpdateMouth(ReadOnlySpan<float> values, byte faceFlags, NativeFaceSource source,
+        bool nativeTongueAvailable = true)
     {
         // Both sources use the same XR_FB indices for direct face shapes.
-        long frameTickMs = Environment.TickCount64;
+        long frameTickMs = _tickClock();
         foreach ((int expressionIndex, int[] targets) in ExpressionMap)
             foreach (int target in targets)
                 Set(target, values[expressionIndex]);
@@ -680,11 +669,14 @@ public sealed class TrackingModule : ExtTrackingModule
         Set((int)UnifiedExpressions.LipSuckUpperLeft, lips.SuckUpperLeft);
         Set((int)UnifiedExpressions.LipSuckUpperRight, lips.SuckUpperRight);
 
-        bool customFresh = _lastTongueTick != 0 &&
-            Environment.TickCount64 - _lastTongueTick <= TongueTimeoutMs;
-        NativeTongueWeights? nativeTongue = NativeTongueMapping.Resolve(
-            values, source, faceFlags, customFresh, _tongueEnabled);
-        if (nativeTongue is null)
+        UpdateTongueOutput(values, faceFlags, source, nativeTongueAvailable);
+    }
+
+    private void UpdateTongueOutput(ReadOnlySpan<float> values, byte faceFlags,
+        NativeFaceSource source, bool nativeAvailable)
+    {
+        OverlayOutput output = _tongueOverlay.Resolve(_tickClock(), nativeAvailable);
+        if (output == OverlayOutput.Custom)
         {
             // Do not rewrite unchanged tongue shapes at the module's ~200 Hz
             // face cadence. A new camera packet is the only thing that should
@@ -696,17 +688,114 @@ public sealed class TrackingModule : ExtTrackingModule
                 _tongueDirty = false;
             }
         }
+        else if (output == OverlayOutput.Native)
+        {
+            NativeTongueWeights nativeTongue = NativeTongueMapping.Resolve(
+                values, source, faceFlags, customFresh: false, customEnabled: false)!.Value;
+            Span<float> nativeSlots = stackalloc float[NativeTongueMapping.SlotCount];
+            NativeTongueMapping.WriteSlots(nativeTongue, nativeSlots);
+            SetTongueSlots(nativeSlots);
+            _tongueDirty = false;
+        }
+        else if (output == OverlayOutput.Neutral)
+        {
+            Span<float> neutral = stackalloc float[NativeTongueMapping.SlotCount];
+            neutral.Clear();
+            SetTongueSlots(neutral);
+            _tongueDirty = false;
+        }
+    }
+
+    private void UpdateUnavailableSource()
+    {
+        if (_needsEye)
+        {
+            long now = _tickClock();
+            UpdateGazeOutput(now, left: true, nativeAvailable: false, 0, 0);
+            UpdateGazeOutput(now, left: false, nativeAvailable: false, 0, 0);
+            UpdatePupilOutput(now, nativeAvailable: false);
+        }
+        if (_needsExpression)
+            UpdateTongueOutput(default, 0, NativeFaceSource.VirtualDesktop, nativeAvailable: false);
+    }
+
+    private void UpdateGazeOutput(long now, bool left, bool nativeAvailable,
+        float nativeX, float nativeY)
+    {
+        LiveOverlayState overlay = left ? _leftGazeOverlay : _rightGazeOverlay;
+        OverlayOutput output = overlay.Resolve(now,
+            nativeAvailable && float.IsFinite(nativeX) && float.IsFinite(nativeY));
+        if (output == OverlayOutput.Unchanged) return;
+        float x = output switch
+        {
+            OverlayOutput.Custom => left ? _leftGazeX : _rightGazeX,
+            OverlayOutput.Native => nativeX,
+            _ => 0.0f,
+        };
+        float y = output switch
+        {
+            OverlayOutput.Custom => left ? _leftGazeY : _rightGazeY,
+            OverlayOutput.Native => nativeY,
+            _ => 0.0f,
+        };
+        // VRCFT stores each eye as a value type; a local copy would discard
+        // the update and leave the previous gaze in place.
+        if (left)
+        {
+            UnifiedTracking.Data.Eye.Left.Gaze.x = x;
+            UnifiedTracking.Data.Eye.Left.Gaze.y = y;
+        }
         else
         {
-            Span<float> nativeSlots = stackalloc float[NativeTongueMapping.SlotCount];
-            NativeTongueMapping.WriteSlots(nativeTongue.Value, nativeSlots);
-            SetTongueSlots(nativeSlots);
+            UnifiedTracking.Data.Eye.Right.Gaze.x = x;
+            UnifiedTracking.Data.Eye.Right.Gaze.y = y;
         }
+    }
+
+    private void UpdatePupilOutput(long now, bool nativeAvailable)
+    {
+        OverlayOutput left = _leftPupilOverlay.Resolve(now, nativeAvailable);
+        OverlayOutput right = _rightPupilOverlay.Resolve(now, nativeAvailable);
+        if (left != OverlayOutput.Unchanged)
+            UnifiedTracking.Data.Eye.Left.PupilDiameter_MM = left == OverlayOutput.Custom ? _leftPupilMm : 5.0f;
+        if (right != OverlayOutput.Unchanged)
+            UnifiedTracking.Data.Eye.Right.PupilDiameter_MM = right == OverlayOutput.Custom ? _rightPupilMm : 5.0f;
+        if (left != OverlayOutput.Unchanged || right != OverlayOutput.Unchanged)
+        {
+            UnifiedTracking.Data.Eye._minDilation = 2.0f;
+            UnifiedTracking.Data.Eye._maxDilation = 8.0f;
+        }
+    }
+
+    private bool DiscardInactivePackets()
+    {
+        bool drained = LocalDatagrams.DiscardPending(_gazeSocket);
+        drained &= LocalDatagrams.DiscardPending(_tongueSocket);
+        drained &= LocalDatagrams.DiscardPending(_pupilSocket);
+        drained &= _steamSource?.DiscardPending() ?? true;
+        foreach (LiveOverlayState overlay in OverlayStates()) overlay.DiscardPackets();
+        _tongueDirty = false;
+        return drained;
+    }
+
+    private IEnumerable<LiveOverlayState> OverlayStates()
+    {
+        yield return _leftGazeOverlay;
+        yield return _rightGazeOverlay;
+        yield return _tongueOverlay;
+        yield return _leftPupilOverlay;
+        yield return _rightPupilOverlay;
+    }
+
+    private void ResetOverlayState()
+    {
+        foreach (LiveOverlayState overlay in OverlayStates()) overlay.Reset();
+        _tongueDirty = false;
     }
 
     private void RefreshCheekPuffMode()
     {
-        long now = Environment.TickCount64;
+        long now = _tickClock();
         if (now < _nextCheekPuffModeCheckTick) return;
         _nextCheekPuffModeCheckTick = now + 250;
         CheekPuffMode selected;
@@ -775,7 +864,7 @@ public sealed class TrackingModule : ExtTrackingModule
 
     private void RefreshCheekSuckMode()
     {
-        long now = Environment.TickCount64;
+        long now = _tickClock();
         if (now < _nextCheekSuckModeCheckTick) return;
         _nextCheekSuckModeCheckTick = now + 250;
         CheekSuckMode selected;
@@ -806,7 +895,7 @@ public sealed class TrackingModule : ExtTrackingModule
 
     private void RefreshEyebrowSettings()
     {
-        long now = Environment.TickCount64;
+        long now = _tickClock();
         if (now < _nextEyebrowSettingsCheckTick) return;
         _nextEyebrowSettingsCheckTick = now + 250;
         EyebrowSettings selected = EyebrowPreference.Load();
