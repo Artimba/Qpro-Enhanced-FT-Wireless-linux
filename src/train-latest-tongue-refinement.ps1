@@ -9,6 +9,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$qproGpuVisibilityNames = @('HIP_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'GPU_DEVICE_ORDINAL')
+$qproSavedGpuVisibility = @{}
+foreach ($name in $qproGpuVisibilityNames) {
+    $qproSavedGpuVisibility[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+function Restore-QproGpuVisibility {
+    foreach ($name in $qproGpuVisibilityNames) {
+        [Environment]::SetEnvironmentVariable($name, $qproSavedGpuVisibility[$name], 'Process')
+    }
+}
 Push-Location $PSScriptRoot
 try {
     function Test-QproTrainingPython([string]$Candidate) {
@@ -42,6 +52,11 @@ try {
     foreach ($candidate in $rocmCandidates) {
         if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
             -not (Test-Path -LiteralPath $candidate.ReadyMarker -PathType Leaf)) { continue }
+        # Clear inherited masks only for ROCm so HIP can enumerate the
+        # discrete card itself, independently of Windows display order.
+        foreach ($name in $qproGpuVisibilityNames) {
+            [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+        }
         if ($candidate.TargetFamily) { $env:ROCM_SDK_TARGET_FAMILY = $candidate.TargetFamily }
         else { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
         $probePreference = $ErrorActionPreference
@@ -60,6 +75,7 @@ try {
         Write-Warning "$($candidate.Name) cannot see a supported discrete Radeon GPU. Trying the next runtime."
     }
     if (-not $python) {
+        Restore-QproGpuVisibility
         Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue
         $sharedPython = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'QproFaceTracking\runtime\.venv\Scripts\python.exe'
         $candidates = @(
@@ -170,5 +186,6 @@ try {
     Write-Host "MODEL_READY version=$version parent=$($base.Version)"
 }
 finally {
+    Restore-QproGpuVisibility
     Pop-Location
 }

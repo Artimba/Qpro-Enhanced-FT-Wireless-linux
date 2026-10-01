@@ -64,6 +64,16 @@ $labelBridgeProcess = $null
 $launcherFailure = $null
 $hadAndroidSerial = Test-Path Env:ANDROID_SERIAL
 $previousAndroidSerial = $env:ANDROID_SERIAL
+$qproGpuVisibilityNames = @('HIP_VISIBLE_DEVICES', 'CUDA_VISIBLE_DEVICES', 'ROCR_VISIBLE_DEVICES', 'GPU_DEVICE_ORDINAL')
+$qproSavedGpuVisibility = @{}
+foreach ($name in $qproGpuVisibilityNames) {
+    $qproSavedGpuVisibility[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+function Restore-QproGpuVisibility {
+    foreach ($name in $qproGpuVisibilityNames) {
+        [Environment]::SetEnvironmentVariable($name, $qproSavedGpuVisibility[$name], 'Process')
+    }
+}
 if ([string]::IsNullOrWhiteSpace($AdbTarget) -and -not [string]::IsNullOrWhiteSpace($env:QPRO_ADB_TARGET)) {
     $AdbTarget = $env:QPRO_ADB_TARGET.Trim()
 }
@@ -332,6 +342,12 @@ try {
         foreach ($candidate in $rocmCandidates) {
             if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
                 -not (Test-Path -LiteralPath $candidate.ReadyMarker -PathType Leaf)) { continue }
+            # Inherited masks may hide the discrete card or renumber it. Let
+            # Qpro validate names in HIP's actual order before choosing a GPU.
+            # Keep this local to the ROCm run; restore before a CUDA fallback.
+            foreach ($name in $qproGpuVisibilityNames) {
+                [Environment]::SetEnvironmentVariable($name, $null, 'Process')
+            }
             if ($candidate.TargetFamily) { $env:ROCM_SDK_TARGET_FAMILY = $candidate.TargetFamily }
             else { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
             $probeSucceeded = $false
@@ -347,7 +363,10 @@ try {
             Write-Warning "$($candidate.Name) cannot see a supported discrete Radeon GPU. Trying the next runtime."
         }
     }
-    if (-not $rocmPython) { Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue }
+    if (-not $rocmPython) {
+        Restore-QproGpuVisibility
+        Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue
+    }
     $python = if ($rocmPython) { $rocmPython } elseif (-not [string]::IsNullOrWhiteSpace($env:QPRO_PYTHON)) { $env:QPRO_PYTHON } else { Join-Path $PSScriptRoot ".venv\Scripts\python.exe" }
     Write-Host "PC Python runtime: $python"
     $pythonFallback = Join-Path $PSScriptRoot ".venv\Scripts\qpro-python-console.exe"
@@ -597,6 +616,7 @@ try {
         }
     }
     $null = & $adbExecutable forward --remove "tcp:$StreamPort" 2>&1
+    Restore-QproGpuVisibility
     Pop-Location
     if ($hadAndroidSerial) {
         $env:ANDROID_SERIAL = $previousAndroidSerial

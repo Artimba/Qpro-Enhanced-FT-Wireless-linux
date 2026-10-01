@@ -14,6 +14,7 @@ from qpro_gpu import (
     is_supported_rocm_gpu_name,
     preferred_torch_device_name,
     require_rocm_device_name,
+    rocm_device_diagnostics,
     validated_torch_device_name,
 )
 
@@ -31,11 +32,13 @@ ROCM_10_CARD_TARGETS = {
 
 
 class FakeCuda:
-    def __init__(self, names, available=True, count_error=False):
+    def __init__(self, names, available=True, count_error=False, architectures=None, properties_error=False):
         self.names = names
         self.available = available
         self.count_error = count_error
         self.count_queries = 0
+        self.architectures = architectures or [None] * len(names)
+        self.properties_error = properties_error
 
     def is_available(self):
         return self.available
@@ -49,13 +52,22 @@ class FakeCuda:
     def get_device_name(self, index):
         return self.names[index]
 
+    def get_device_properties(self, index):
+        if self.properties_error:
+            raise RuntimeError("HIP properties unavailable")
+        return SimpleNamespace(gcnArchName=self.architectures[index])
 
-def fake_torch(names, *, hip=None, rocm=None, cuda=None, available=True, count_error=False, torch_version=""):
-    return SimpleNamespace(
+
+def fake_torch(names, *, hip=None, rocm=None, cuda=None, available=True, count_error=False, torch_version="",
+               architectures=None, properties_error=False, native_count=None):
+    torch = SimpleNamespace(
         __version__=torch_version,
         version=SimpleNamespace(hip=hip, rocm=rocm, cuda=cuda),
-        cuda=FakeCuda(names, available, count_error),
+        cuda=FakeCuda(names, available, count_error, architectures, properties_error),
     )
+    if native_count is not None:
+        torch._C = SimpleNamespace(_cuda_getDeviceCount=lambda: native_count)
+    return torch
 
 
 def write_experimental_marker(root, target, **overrides):
@@ -92,6 +104,19 @@ class QproGpuTests(unittest.TestCase):
             self.assertFalse(is_supported_rocm_gpu_name(name, "10.0.0"))
         self.assertFalse(is_supported_rocm_gpu_name("AMD Radeon RX 6800 XT", "10.1"))
         self.assertTrue(is_supported_rocm_gpu_name("AMD Radeon RX 7900 XTX", "10.0.0"))
+
+    def test_desktop_card_names_accept_driver_spacing_without_accepting_mobile(self):
+        for name in ("AMD Radeon RX 6700 XT", "AMD Radeon RX 6700XT", "AMD Radeon RX6700XT",
+                     "AMD RX6700XT", "RX6700XT", "Radeon™ RX 6700XT", " AMD Radeon(TM)  RX6700XT "):
+            with self.subTest(name=name):
+                self.assertEqual(experimental_rocm_target_for_gpu_name(name), "gfx1031")
+                self.assertTrue(is_supported_rocm_gpu_name(name, "10.0.0"))
+        for name, target in (("AMD Radeon RX7900XTX", "gfx1100"), ("RX9070GRE", "gfx1201"),
+                             ("Radeon® RX9060XT", "gfx1200")):
+            self.assertEqual(experimental_rocm_target_for_gpu_name(name), target)
+        for name in ("AMD Radeon RX6700M", "AMD Radeon RX6700XT Mobile", "AMD Radeon RX6700X",
+                     "AMD Radeon RX6700XT Graphics", "AMD Radeon 780M", "RX67000XT", "RX6500XT"):
+            self.assertIsNone(experimental_rocm_target_for_gpu_name(name))
 
     def test_experimental_rocm_skips_integrated_gpu(self):
         torch = fake_torch(
@@ -263,6 +288,75 @@ class QproGpuTests(unittest.TestCase):
             validated_torch_device_name(torch, "cuda:0")
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             validated_torch_device_name(torch, "cuda:1")
+
+    def test_native_hip_count_finds_discrete_after_multiple_integrated_adapters(self):
+        torch = fake_torch(
+            ["AMD Radeon Graphics", "AMD Radeon 780M", "AMD Radeon RX6700XT"],
+            hip="7.15.26333", rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+            count_error=True, native_count=3, architectures=["gfx1036", "gfx1103", "gfx1031:xnack-"],
+        )
+        with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
+            "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1031"}
+        ):
+            self.assertEqual(require_rocm_device_name(torch), "cuda:2")
+            self.assertEqual(validated_torch_device_name(torch, "cuda:2"), "cuda:2")
+            self.assertEqual(torch.cuda.count_queries, 0)
+            with self.assertRaisesRegex(RuntimeError, "not a supported discrete"):
+                validated_torch_device_name(torch, "cuda:0")
+
+    def test_native_count_does_not_guess_a_hidden_discrete_adapter_index(self):
+        torch = fake_torch(
+            ["AMD Radeon 780M", "AMD Radeon RX6700XT"],
+            hip="7.15.26333", rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+            count_error=True, native_count=1,
+        )
+        with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
+            "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1031"}
+        ):
+            self.assertEqual(preferred_torch_device_name(torch), "cpu")
+
+    def test_reported_architecture_must_match_discrete_name_and_ready_target(self):
+        torch = fake_torch(
+            ["AMD Radeon RX6700XT", "AMD Radeon RX 6700 XT"],
+            hip="7.15.26333", rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+            architectures=["gfx1036", "gfx1031:sramecc-:xnack-"],
+        )
+        with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
+            "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1031"}
+        ):
+            self.assertEqual(require_rocm_device_name(torch), "cuda:1")
+            with self.assertRaisesRegex(RuntimeError, "installed gfx target"):
+                validated_torch_device_name(torch, "cuda:0")
+            write_experimental_marker(root, "gfx1030")
+            self.assertEqual(preferred_torch_device_name(torch), "cpu")
+
+    def test_properties_error_does_not_promote_a_device_by_name_alone(self):
+        torch = fake_torch(["AMD Radeon RX 7900 XTX"], hip="7.2.1", properties_error=True)
+        self.assertEqual(preferred_torch_device_name(torch), "cpu")
+        with self.assertRaisesRegex(RuntimeError, "not a supported discrete"):
+            validated_torch_device_name(torch, "cuda:0")
+
+    def test_diagnostics_identify_integrated_wrong_target_and_architecture(self):
+        torch = fake_torch(
+            ["AMD Radeon Graphics", "AMD Radeon RX6700XT", "AMD Radeon RX 6800 XT", "RX 6700XT"],
+            hip="7.15.26333", rocm="10.0.0", torch_version="2.13.0+rocm10.0.0",
+            architectures=["gfx1036", "gfx1031", "gfx1030", "gfx1036"],
+        )
+        with tempfile.TemporaryDirectory() as root, patch("qpro_gpu.sys.prefix", root), patch.dict(
+            "os.environ", {"QPRO_ROCM_INSTALL_SMOKE_TEST": "1", "QPRO_ROCM_EXPECTED_GFX_TARGET": "gfx1031"}
+        ):
+            details = rocm_device_diagnostics(torch)
+            self.assertIn("cuda:0 AMD Radeon Graphics (gfx1036): integrated", details)
+            self.assertIn("cuda:1 AMD Radeon RX6700XT (gfx1031): eligible discrete GPU", details)
+            self.assertIn("requires gfx1030; environment prepared for gfx1031", details)
+            self.assertIn("reported architecture differs from model target gfx1031", details)
+
+    def test_visibility_settings_are_explained_without_rewriting_them_after_import(self):
+        torch = fake_torch(["AMD Radeon Graphics"], hip="7.2.1")
+        with patch.dict("os.environ", {"HIP_VISIBLE_DEVICES": "0", "ROCR_VISIBLE_DEVICES": "0"}):
+            with self.assertRaisesRegex(RuntimeError, "HIP_VISIBLE_DEVICES.*ROCR_VISIBLE_DEVICES"):
+                require_rocm_device_name(torch)
+            self.assertEqual(__import__("os").environ["HIP_VISIBLE_DEVICES"], "0")
 
     def test_rocm_igpu_only_uses_cpu_or_explains_failure(self):
         torch = fake_torch(["AMD Radeon Graphics"], hip="7.2.1")

@@ -305,9 +305,15 @@ internal sealed partial class HubForm
     {
         var normalized = System.Text.RegularExpressions.Regex.Replace(name, @"\((?:TM|R)\)", " ",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        normalized = System.Text.RegularExpressions.Regex.Replace(normalized, "[™®]", " ");
         normalized = System.Text.RegularExpressions.Regex.Replace(normalized, @"\s+", " ").Trim();
         if (normalized.StartsWith("AMD ", StringComparison.OrdinalIgnoreCase)) normalized = normalized[4..];
-        return normalized.StartsWith("RX ", StringComparison.OrdinalIgnoreCase) ? "Radeon " + normalized : normalized;
+        var model = System.Text.RegularExpressions.Regex.Match(normalized,
+            @"^(?:Radeon\s*)?RX\s*(\d{4})\s*(XTX|XT|GRE)?$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return model.Success
+            ? $"Radeon RX {model.Groups[1].Value}" + (model.Groups[2].Success ? " " + model.Groups[2].Value : "")
+            : normalized;
     }
 
     private static string? LatestRocmTarget(string name, string pnpId)

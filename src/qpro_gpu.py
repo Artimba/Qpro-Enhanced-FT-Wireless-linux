@@ -57,9 +57,15 @@ _EXPERIMENTAL_RADEON_TARGETS = {
 
 def _normalized_gpu_name(name: str) -> str:
     normalized = re.sub(r"\((?:TM|R)\)", " ", str(name), flags=re.IGNORECASE)
+    normalized = re.sub(r"[™®]", " ", normalized)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     normalized = re.sub(r"^AMD\s+", "", normalized, flags=re.IGNORECASE)
-    normalized = re.sub(r"^RX\s+", "Radeon RX ", normalized, flags=re.IGNORECASE)
+    # Driver names vary in spacing (RX6700XT, RX 6700XT, RX 6700 XT).
+    # Only canonicalize a complete desktop model: suffixes such as Mobile,
+    # 6700M or an unknown series remain outside the exact discrete allowlist.
+    model = re.fullmatch(r"(?:Radeon\s*)?RX\s*(\d{4})\s*(XTX|XT|GRE)?", normalized, re.IGNORECASE)
+    if model:
+        normalized = f"Radeon RX {model[1]}" + (f" {model[2]}" if model[2] else "")
     return normalized.casefold()
 
 
@@ -148,6 +154,79 @@ def _rocm_build_version(torch_module: object) -> str:
     return hip
 
 
+def _rocm_device_count(torch_module: object) -> int:
+    """Use HIP's device order, including if Torch's discovery helper fails."""
+    # PyTorch's public count can use offload-arch/AMD SMI before initialization.
+    # Its native HIP count is the same one used by tensor allocation and avoids
+    # assuming that a Windows display-adapter index is a Torch device index.
+    native_count = getattr(getattr(torch_module, "_C", None), "_cuda_getDeviceCount", None)
+    if callable(native_count):
+        try:
+            return max(0, int(native_count()))
+        except Exception:
+            pass
+    return max(0, int(torch_module.cuda.device_count()))
+
+
+def _supported_rocm_device_at(torch_module: object, index: int, rocm_build: str, expected_target: str | None) -> bool:
+    try:
+        name = torch_module.cuda.get_device_name(index)
+        model_target = experimental_rocm_target_for_gpu_name(name)
+        if not is_supported_rocm_gpu_name(name, rocm_build) or (
+            expected_target is not None and model_target != expected_target
+        ):
+            return False
+        properties = getattr(torch_module.cuda, "get_device_properties", None)
+        if callable(properties):
+            # A driver may report a familiar name with a different actual gfx
+            # architecture. Never use it with a package prepared for another
+            # target. Older wheels without this metadata still use the exact
+            # model allowlist and the installer's training/inference checks.
+            arch = str(getattr(properties(index), "gcnArchName", "") or "").strip().lower()
+            if arch and arch.split(":", 1)[0] != model_target:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def rocm_device_diagnostics(torch_module: object) -> str:
+    """Describe the adapters Torch can actually query and any rejection."""
+    build = _rocm_build_version(torch_module)
+    experimental = build.startswith("10.0")
+    expected_target = _expected_experimental_target() if experimental else None
+    details = []
+    try:
+        count = _rocm_device_count(torch_module)
+    except Exception as exc:
+        count = 1  # Device zero may still be queryable after a helper failure.
+        message = (str(exc).splitlines() or [type(exc).__name__])[0]
+        details.append(f"device enumeration failed: {message}")
+    for index in range(max(1, count)):
+        try:
+            name = str(torch_module.cuda.get_device_name(index))
+            model_target = experimental_rocm_target_for_gpu_name(name)
+            arch = ""
+            properties = getattr(torch_module.cuda, "get_device_properties", None)
+            if callable(properties):
+                arch = str(getattr(properties(index), "gcnArchName", "") or "").strip().lower()
+            if not is_supported_rocm_gpu_name(name, build):
+                reason = "integrated or unmapped GPU for this ROCm build"
+            elif experimental and expected_target is None:
+                reason = "no valid Qpro readiness record"
+            elif expected_target is not None and model_target != expected_target:
+                reason = f"requires {model_target}; environment prepared for {expected_target}"
+            elif arch and arch.split(":", 1)[0] != model_target:
+                reason = f"reported architecture differs from model target {model_target}"
+            else:
+                reason = "eligible discrete GPU"
+            details.append(f"cuda:{index} {name}" + (f" ({arch})" if arch else "") + f": {reason}")
+        except Exception as exc:
+            message = (str(exc).splitlines() or [type(exc).__name__])[0]
+            details.append(f"cuda:{index} query failed: {message}")
+    return "; ".join(details)
+
+
 def supported_rocm_device_name(torch_module: object) -> str | None:
     """Find a supported Radeon device, including when an iGPU is device zero."""
     if not getattr(torch_module.version, "hip", None):
@@ -161,23 +240,14 @@ def supported_rocm_device_name(torch_module: object) -> str | None:
         if experimental and expected_target is None:
             return None
 
-        def supported_at(index: int) -> bool:
-            try:
-                name = torch_module.cuda.get_device_name(index)
-            except Exception:
-                return False
-            return is_supported_rocm_gpu_name(name, rocm_build) and (
-                expected_target is None or experimental_rocm_target_for_gpu_name(name) == expected_target
-            )
-
         # Some relocated Windows ROCm environments can still query and use
         # device zero, while their offload-arch launcher breaks device_count().
         # A successful name query identifies the actual Torch/HIP device and
         # still excludes integrated graphics through the discrete allowlist.
-        if supported_at(0):
+        if _supported_rocm_device_at(torch_module, 0, rocm_build, expected_target):
             return "cuda:0"
-        for index in range(1, torch_module.cuda.device_count()):
-            if supported_at(index):
+        for index in range(1, _rocm_device_count(torch_module)):
+            if _supported_rocm_device_at(torch_module, index, rocm_build, expected_target):
                 return f"cuda:{index}"
     except Exception:
         return None
@@ -206,13 +276,20 @@ def require_rocm_device_name(torch_module: object) -> str:
         if experimental and expected_target is None:
             raise RuntimeError(
                 "ROCm 10.0 has no valid Qpro readiness record for a discrete GPU "
-                "target. Run Install AMD ROCm again before using this environment."
+                "target. Run Install AMD ROCm again before using this environment. "
+                f"Torch adapters: {rocm_device_diagnostics(torch_module)}"
             )
         target_hint = f" The experimental environment was prepared for {expected_target}." if expected_target else ""
+        visibility = [key for key in ("HIP_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "GPU_DEVICE_ORDINAL") if key in os.environ]
+        visibility_hint = (
+            f" GPU visibility settings are active ({', '.join(visibility)}); restart through the Hub so Qpro can detect the discrete GPU."
+            if visibility else ""
+        )
         raise RuntimeError(
             "ROCm cannot see a discrete Radeon supported by this Qpro ROCm build. "
             f"Ryzen integrated graphics are not supported.{target_hint} Check the AMD driver, "
-            "the selected ROCm build, or use the CPU runtime."
+            f"the selected ROCm build, or use the CPU runtime.{visibility_hint} "
+            f"Torch adapters: {rocm_device_diagnostics(torch_module)}"
         )
     return device
 
@@ -241,11 +318,9 @@ def validated_torch_device_name(torch_module: object, requested: str) -> str:
         expected_target = _expected_experimental_target() if experimental else None
         if experimental and expected_target is None:
             raise RuntimeError("ROCm 10.0 has no valid Qpro readiness record for a discrete GPU target")
-        if not is_supported_rocm_gpu_name(name, rocm_build) or (
-            expected_target is not None and experimental_rocm_target_for_gpu_name(name) != expected_target
-        ):
+        if not _supported_rocm_device_at(torch_module, index, rocm_build, expected_target):
             raise RuntimeError(
                 f"ROCm device {requested} ({name}) is not a supported discrete "
-                "Radeon GPU; choose the supported GPU or CPU"
+                "Radeon GPU for the installed gfx target; choose the supported GPU or CPU"
             )
     return requested
