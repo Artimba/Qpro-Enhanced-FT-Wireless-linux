@@ -3,11 +3,14 @@
 
 Only the two engine profiles already supported by native_raw_eye_probe.py are
 eligible. No firmware, engine binary, or stock model is bundled with the app.
+Preparation refuses other active gaze methods and overlaid model/engine paths;
+that safety check does not make an unsupported tracking engine compatible.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -45,6 +48,90 @@ MODEL_PATH_RE = re.compile(
     r"^/odm/etc/eyetracking/runtime/models/Seacliff_V1_5/"
     r"[A-Za-z0-9_./-]*/bolt/bolt\.ptl$"
 )
+EXPERIMENTAL_PROPERTY = (
+    "persist.device_config.oculus_shared_vision.oculus_eyetracking_enable_experimental_model"
+)
+MAGISK_MODULE_ROOT = "/data/adb/modules"
+GAZE_MODULE_IDS = frozenset({"questpro_independent_gaze"})
+OVERLAYFS_ODM_UPPER = "/dev/mount_overlayfs/upper/odm"
+OVERLAYFS_MODULE_IDS = frozenset({"magisk_overlayfs", "overlayfs"})
+OVERLAYFS_ODM_UPPER_ALIASES = frozenset({
+    "/debug_ramdisk/overlayfs_mnt/upper/odm",
+    "/sbin/overlayfs_mnt/upper/odm",
+})
+MODULE_PATH_RE = re.compile(r"^/data/adb/modules/[A-Za-z0-9_.-]{1,128}$")
+GAZE_REFERENCE_RE = re.compile(
+    r"independent[\s_-]*(?:eye[\s_-]*)?gaze|independent[\s_-]*eye|"
+    r"eye[\s_-]*tracking|eyetracking|bolt\.ptl|libtrackingengines",
+    flags=re.IGNORECASE,
+)
+# This is a fixed read-only command: module scripts are read as text, never
+# sourced or executed. Limits and the final sentinel make an incomplete scan
+# a refusal, rather than evidence that no other gaze method exists.
+GAZE_ENVIRONMENT_SCAN = r"""set -eu
+printf 'QPRO_GAZE_SCAN_V1\n'
+test -d /data/adb/modules && test -r /data/adb/modules && test -x /data/adb/modules || { printf 'Magisk modules directory is unavailable\n' >&2; exit 1; }
+count=0
+overlayfs_enabled=0
+for module in /data/adb/modules/* /data/adb/modules/.[!.]* /data/adb/modules/..?*; do
+    test -d "$module" || continue
+    count=$((count + 1))
+    test "$count" -le 128 || { printf 'Too many Magisk modules to verify\n' >&2; exit 1; }
+    test -r "$module" && test -x "$module" || exit 1
+    printf 'QPRO_MODULE_BEGIN %s\n' "$module"
+    enabled=1
+    if test -e "$module/disable"; then enabled=0; fi
+    pending_remove=0
+    if test -e "$module/remove"; then pending_remove=1; fi
+    printf 'QPRO_MODULE_ENABLED %s\n' "$enabled"
+    printf 'QPRO_MODULE_PENDING_REMOVE %s\n' "$pending_remove"
+    for file in module.prop service.sh post-fs-data.sh system.prop sepolicy.rule; do
+        path="$module/$file"
+        if test "$file" = module.prop || test -e "$path"; then
+            test -f "$path" && test -r "$path" || exit 1
+            size=$(wc -c < "$path") || exit 1
+            test "$size" -le 65536 || { printf 'Magisk metadata or policy file is too large\n' >&2; exit 1; }
+            printf 'QPRO_FILE_BEGIN %s\n' "$file"
+            cat "$path" || exit 1
+            printf '\nQPRO_FILE_END\n'
+        fi
+    done
+    module_id=$(sed -n 's/^id=//p' "$module/module.prop") || exit 1
+    module_id=$(printf '%s' "$module_id" | tr -d '\r') || exit 1
+    if test "$enabled" = 1; then
+        case "$module_id" in magisk_overlayfs|overlayfs) overlayfs_enabled=1 ;; esac
+        case "$module" in /data/adb/modules/magisk_overlayfs|/data/adb/modules/overlayfs) overlayfs_enabled=1 ;; esac
+    fi
+    printf 'QPRO_MODULE_END\n'
+done
+test -r /proc/mounts || exit 1
+size=$(wc -c < /proc/mounts) || exit 1
+test "$size" -le 1048576 || exit 1
+printf 'QPRO_MOUNTS_BEGIN\n'
+cat /proc/mounts || exit 1
+printf '\nQPRO_MOUNTS_END\n'
+upper=/dev/mount_overlayfs/upper/odm
+# OverlayFS can remove its temporary mount while retaining the same backing
+# directory under Magisk's mount namespace. Never treat a missing path as empty.
+if ! test -e "$upper" && test "$overlayfs_enabled" = 1; then
+    magisk_path=$(magisk --path) || exit 1
+    case "$magisk_path" in
+        /debug_ramdisk|/sbin) upper="$magisk_path/overlayfs_mnt/upper/odm" ;;
+        *) printf 'Unrecognized Magisk temporary path\n' >&2; exit 1 ;;
+    esac
+fi
+printf 'QPRO_OVERLAY_UPPER_PATH_BEGIN\n%s\nQPRO_OVERLAY_UPPER_PATH_END\nQPRO_OVERLAY_UPPER_BEGIN\n' "$upper"
+if test -e "$upper"; then
+    test -d "$upper" && test -r "$upper" && test -x "$upper" || exit 1
+    entry=$(find "$upper" -mindepth 1 -maxdepth 1 -print -quit) || exit 1
+    if test -z "$entry"; then printf 'empty\n'; else printf 'notEmpty\n'; fi
+else
+    printf 'absent\n'
+fi
+printf 'QPRO_OVERLAY_UPPER_END\nQPRO_EXPERIMENTAL_BEGIN\n'
+getprop persist.device_config.oculus_shared_vision.oculus_eyetracking_enable_experimental_model || exit 1
+printf '\nQPRO_EXPERIMENTAL_END\nQPRO_GAZE_SCAN_COMPLETE\n'
+"""
 
 # Keep these sizes and the pinned hash aligned with native_raw_eye_probe.py.
 ENGINE_PROFILES = (
@@ -123,7 +210,13 @@ class AdbClient:
         return authorized[0]
 
     def root(self, command: str, *, timeout: int = 20) -> str:
-        return self._run(["-s", self.serial, "shell", "su", "-c", command], timeout=timeout)
+        # A single encoded shell argument survives Windows and ADB quoting.
+        # Only our supplied query reaches the root shell; downloaded module
+        # scripts are inspected by the query as data, never run as commands.
+        normalized = command.replace("\r\n", "\n").replace("\r", "\n")
+        payload = base64.b64encode(normalized.encode("utf-8")).decode("ascii")
+        request = f"printf %s {payload} | base64 -d | su -c sh"
+        return self._run(["-s", self.serial, "shell", request], timeout=timeout)
 
     def getprop(self, name: str) -> str:
         return self.root(f"getprop {name}").strip()
@@ -266,11 +359,207 @@ def _is_mounted(client: AdbClient, model_path: str) -> bool:
     )
 
 
+def _parse_gaze_environment(output: str) -> dict[str, Any]:
+    lines = output.splitlines()
+    if not lines or lines[0] != "QPRO_GAZE_SCAN_V1" or lines[-1] != "QPRO_GAZE_SCAN_COMPLETE":
+        raise PreparationError("The Magisk and gaze-mount safety scan did not complete.")
+    modules: list[dict[str, Any]] = []
+    index = 1
+    policy_files = {"module.prop", "service.sh", "post-fs-data.sh", "system.prop", "sepolicy.rule"}
+
+    def take_section(end_marker: str) -> str:
+        nonlocal index
+        start = index
+        while index < len(lines) and lines[index] != end_marker:
+            index += 1
+        if index >= len(lines):
+            raise PreparationError("The Magisk and gaze-mount safety scan was truncated.")
+        content = "\n".join(lines[start:index]).strip()
+        index += 1
+        return content
+
+    try:
+        while lines[index].startswith("QPRO_MODULE_BEGIN "):
+            path = lines[index].removeprefix("QPRO_MODULE_BEGIN ")
+            if not MODULE_PATH_RE.fullmatch(path) or path.rsplit("/", 1)[-1] in {".", ".."}:
+                raise PreparationError("The Magisk safety scan reported an invalid module directory.")
+            index += 1
+            enabled_line = lines[index]
+            if enabled_line not in {"QPRO_MODULE_ENABLED 0", "QPRO_MODULE_ENABLED 1"}:
+                raise PreparationError("The Magisk safety scan did not report a module's enabled state.")
+            index += 1
+            pending_remove_line = lines[index]
+            if pending_remove_line not in {"QPRO_MODULE_PENDING_REMOVE 0", "QPRO_MODULE_PENDING_REMOVE 1"}:
+                raise PreparationError("The Magisk safety scan did not report a module's pending-removal state.")
+            index += 1
+            contents: dict[str, str] = {}
+            while lines[index].startswith("QPRO_FILE_BEGIN "):
+                filename = lines[index].removeprefix("QPRO_FILE_BEGIN ")
+                if filename not in policy_files or filename in contents:
+                    raise PreparationError("The Magisk safety scan reported invalid policy metadata.")
+                index += 1
+                contents[filename] = take_section("QPRO_FILE_END")
+                if len(contents[filename]) > 65536:
+                    raise PreparationError("The Magisk safety scan exceeded its metadata limit.")
+            if lines[index] != "QPRO_MODULE_END" or "module.prop" not in contents:
+                raise PreparationError("The Magisk safety scan could not read a module's metadata.")
+            index += 1
+            properties = {
+                key.strip(): value.strip()
+                for line in contents["module.prop"].splitlines()
+                if "=" in line and not line.lstrip().startswith("#")
+                for key, value in [line.split("=", 1)]
+            }
+            directory_name = path.rsplit("/", 1)[-1]
+            relevant_files = sorted(
+                filename for filename, content in contents.items()
+                if GAZE_REFERENCE_RE.search(content)
+            )
+            known_gaze_id = any(
+                value.lower() in GAZE_MODULE_IDS
+                for value in (directory_name, properties.get("id", ""))
+            )
+            modules.append({
+                "directory": directory_name,
+                "id": properties.get("id", directory_name)[:128],
+                "name": properties.get("name", "")[:256],
+                "enabled": enabled_line.endswith(" 1"),
+                "pendingRemoval": pending_remove_line.endswith(" 1"),
+                "gazeRelevant": known_gaze_id or bool(relevant_files),
+                "relevantFiles": relevant_files,
+            })
+            if len(modules) > 128:
+                raise PreparationError("The Magisk safety scan exceeded its module limit.")
+        if lines[index] != "QPRO_MOUNTS_BEGIN":
+            raise PreparationError("The Magisk safety scan did not include the mount table.")
+        index += 1
+        mounts = take_section("QPRO_MOUNTS_END")
+        if not mounts or len(mounts) > 1048576:
+            raise PreparationError("The gaze safety scan could not read a complete mount table.")
+        if lines[index] != "QPRO_OVERLAY_UPPER_PATH_BEGIN":
+            raise PreparationError("The gaze safety scan did not identify its OverlayFS upper directory.")
+        index += 1
+        upper_path = take_section("QPRO_OVERLAY_UPPER_PATH_END")
+        if upper_path not in {OVERLAYFS_ODM_UPPER, *OVERLAYFS_ODM_UPPER_ALIASES}:
+            raise PreparationError("The gaze safety scan reported an unrecognized Magisk temporary path.")
+        if lines[index] != "QPRO_OVERLAY_UPPER_BEGIN":
+            raise PreparationError("The gaze safety scan did not verify the OverlayFS upper directory.")
+        index += 1
+        upper_state = take_section("QPRO_OVERLAY_UPPER_END")
+        if upper_state not in {"empty", "notEmpty", "absent"}:
+            raise PreparationError("The gaze safety scan could not read the OverlayFS upper directory.")
+        if lines[index] != "QPRO_EXPERIMENTAL_BEGIN":
+            raise PreparationError("The gaze safety scan did not include the experimental-model property.")
+        index += 1
+        experimental = take_section("QPRO_EXPERIMENTAL_END")
+        if index != len(lines) - 1:
+            raise PreparationError("The gaze safety scan contained unexpected trailing data.")
+    except IndexError as error:
+        raise PreparationError("The Magisk and gaze-mount safety scan was truncated.") from error
+    relevant_mounts: list[dict[str, str]] = []
+    transparent_mounts: list[dict[str, str]] = []
+    overlayfs_enabled = any(
+        module["enabled"] and any(value.lower() in OVERLAYFS_MODULE_IDS for value in (module["id"], module["directory"]))
+        for module in modules
+    )
+    for line in mounts.splitlines():
+        fields = line.split()
+        if len(fields) != 6 or not fields[1].startswith("/"):
+            raise PreparationError("The gaze safety scan contained an unreadable mount-table entry.")
+        source, target, filesystem = fields[:3]
+        # Relevant descendants and intermediate directory mounts can hide
+        # stock bytes too. Ordinary physical /odm mounts are expected; an
+        # overlay/tmpfs or data-backed replacement of that ancestor is not.
+        ancestor = target == "/" or any(
+            path == target or path.startswith(target.rstrip("/") + "/")
+            for path in (MODEL_ROOT, ENGINE_PATH)
+        )
+        model_descendant = target.startswith(MODEL_ROOT + "/")
+        intermediate_mount = ancestor and target not in {"/", "/odm"}
+        replaced_ancestor = ancestor and (
+            filesystem in {"overlay", "overlayfs", "tmpfs"}
+            or source.startswith(("/data/", "/dev/block/loop", "/dev/loop"))
+        )
+        if model_descendant or intermediate_mount or replaced_ancestor:
+            mount = {"source": source, "target": target, "filesystem": filesystem, "options": fields[3]}
+            options = fields[3].split(",")
+            values = {key: value for option in options if "=" in option for key, value in [option.split("=", 1)]}
+            workdir = values.get("workdir", "")
+            # Magisk OverlayFS can remain after disabling the gaze module and
+            # rebooting. Only its observed, read-only ODM shape is transparent:
+            # one original lower layer and an entirely empty upper directory.
+            # Its retained alias is accepted only with the OverlayFS module
+            # enabled and Magisk's temporary root restricted by the scan.
+            # An active gaze module is refused independently of this exception.
+            transparent = (
+                filesystem == "overlay" and source == "overlay"
+                and target in {"/odm", "/odm/etc", "/odm/lib64"}
+                and "ro" in options and "rw" not in options
+                and values.get("lowerdir") == "/odm"
+                and values.get("upperdir") == OVERLAYFS_ODM_UPPER
+                and upper_state == "empty"
+                and (upper_path == OVERLAYFS_ODM_UPPER or overlayfs_enabled)
+                and workdir.startswith("/dev/mount_overlayfs/worker/")
+                and re.fullmatch(r"/dev/mount_overlayfs/worker/[A-Za-z0-9_./-]+", workdir) is not None
+                and not any(part in {".", "..", ""} for part in workdir.split("/")[1:])
+                and all(sum(option.startswith(key + "=") for option in options) == 1 for key in ("lowerdir", "upperdir", "workdir"))
+            )
+            if transparent:
+                transparent_mounts.append(mount)
+            else:
+                relevant_mounts.append(mount)
+    if experimental.lower() not in {"", "0", "1", "false", "true"}:
+        raise PreparationError("The gaze safety scan could not interpret the experimental-model property.")
+    return {
+        "scanComplete": True,
+        "modules": modules,
+        "relevantMounts": relevant_mounts,
+        "transparentOverlayMounts": transparent_mounts,
+        "overlayfsOdmUpperState": upper_state,
+        "overlayfsOdmUpperInspectedPath": upper_path,
+        "experimentalModelProperty": experimental,
+    }
+
+
+def _gaze_environment(client: AdbClient) -> dict[str, Any]:
+    try:
+        return _parse_gaze_environment(client.root(GAZE_ENVIRONMENT_SCAN, timeout=20))
+    except PreparationError as error:
+        raise PreparationError(
+            "Could not verify Magisk modules and gaze mounts; independent gaze was not prepared or applied. "
+            f"The safety scan must be readable and complete. {error}"
+        ) from error
+
+
+def _require_stock_gaze_environment(environment: dict[str, Any]) -> None:
+    active = [module for module in environment["modules"] if module["enabled"] and module["gazeRelevant"]]
+    if active:
+        names = ", ".join(module["id"] for module in active)
+        raise PreparationError(
+            f"An active Magisk gaze module was found ({names}). Use one independent gaze method at a time. "
+            "Leave Independent Eye Gaze off in the Hub while that module is active, or disable the module "
+            "in Magisk and reboot before preparing the Hub's temporary method. No headset tracking was changed."
+        )
+    if environment["relevantMounts"]:
+        paths = ", ".join(mount["target"] for mount in environment["relevantMounts"])
+        raise PreparationError(
+            f"The eye model or tracking engine is currently mounted over ({paths}). "
+            "Stop the gaze test and restore stock before preparing or checking the Hub's gaze model. "
+            "If a Magisk module was disabled, reboot so its mounts are removed. No headset tracking was changed."
+        )
+    if environment["experimentalModelProperty"].lower() in {"1", "true"}:
+        raise PreparationError(
+            "The experimental eye-model selection is already enabled. Stop the existing gaze method and "
+            "restore stock before preparing or checking the Hub's gaze model. No headset tracking was changed."
+        )
+
+
 def inspect_headset(client: AdbClient) -> tuple[dict[str, str], dict[str, Any], str, bool]:
     root_id = client.root("id")
     if "uid=0(root)" not in root_id:
         raise PreparationError("Grant Magisk Superuser access to Shell / ADB Shell, then retry.")
     device = _device_identity(client)
+    _require_stock_gaze_environment(_gaze_environment(client))
     engine = _engine_identity(client, device)
     model_path = _discover_model(client)
     return device, engine, model_path, _is_mounted(client, model_path)
@@ -295,6 +584,13 @@ def diagnose(client: AdbClient) -> dict[str, Any]:
     model_path = None
     mounted = None
     model_error = None
+    environment = None
+    environment_error = None
+    try:
+        environment = _gaze_environment(client)
+        _require_stock_gaze_environment(environment)
+    except PreparationError as error:
+        environment_error = str(error)
     try:
         model_path = _discover_model(client)
         mounted = _is_mounted(client, model_path)
@@ -312,6 +608,9 @@ def diagnose(client: AdbClient) -> dict[str, Any]:
         "modelPath": model_path,
         "modelPathMounted": mounted,
         "modelDiscoveryError": model_error,
+        "gazeEnvironment": environment,
+        "gazeEnvironmentError": environment_error,
+        "gazePreflightPassed": environment is not None and environment_error is None,
         "modelPatchValidated": False,
         "headsetTrackingChanged": False,
     }
@@ -348,6 +647,7 @@ def prepare(client: AdbClient, output_dir: Path = OUTPUT_DIR) -> dict[str, Any]:
             if result.get("sha256") != patched_hash:
                 raise PreparationError("The generated eye model failed its local SHA-256 check.")
             # Ensure the source was stable throughout extraction and patching.
+            _require_stock_gaze_environment(_gaze_environment(client))
             if _read_hash(client, model_path) != source_hash or _is_mounted(client, model_path):
                 raise PreparationError("The headset's stock eye model changed during preparation; retry after restoring stock.")
             manifest: dict[str, Any] = {
@@ -410,7 +710,7 @@ def check_prepared(client: AdbClient, output_dir: Path = OUTPUT_DIR) -> dict[str
         if key not in {"serial", "hardwareSerial"}
     ) or conflicting_hardware or (not same_hardware and prepared_device.get("serial") != device["serial"]):
         raise PreparationError("The connected Quest Pro or its firmware build differs from preparation. Use Prepare gaze again.")
-    if not mounted and _read_hash(client, model_path) != source_hash:
+    if _read_hash(client, model_path) != source_hash:
         raise PreparationError("The headset stock eye model differs from preparation. Use Prepare gaze again.")
     return manifest
 
