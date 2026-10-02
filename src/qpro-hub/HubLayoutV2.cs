@@ -104,106 +104,196 @@ internal sealed partial class HubForm
         var livePage = NewPage();
         var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 5, Padding = Padding.Empty, Margin = Padding.Empty };
         liveLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        liveLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        for (var row = 0; row < 5; row++) liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         livePage.Controls.Add(liveLayout);
-        var statuses = Card();
-        statuses.Dock = DockStyle.Top;
-        statuses.ColumnCount = 2;
-        statuses.RowCount = 9;
-        for (var column = 0; column < 2; column++) statuses.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        statuses.Controls.Add(SectionTitle("Connection and readiness"), 0, 0);
-        statuses.SetColumnSpan(statuses.GetControlFromPosition(0, 0)!, 2);
+        var liveFieldTables = new List<TableLayoutPanel>();
+        void LiveRows(TableLayoutPanel card, int row)
+        {
+            card.RowCount = Math.Max(card.RowCount, row + 1);
+            while (card.RowStyles.Count <= row) card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        }
+        TableLayoutPanel LiveFields()
+        {
+            var card = Card();
+            card.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            card.ColumnCount = 2;
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+            card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            liveFieldTables.Add(card);
+            return card;
+        }
+        void LiveField(TableLayoutPanel card, int row, string text, Control control)
+        {
+            LiveRows(card, row);
+            card.Controls.Add(new Label { Text = text, AutoSize = true, ForeColor = Muted,
+                Margin = new Padding(6, 8, 10, 5), TabIndex = row * 2 }, 0, row);
+            control.TabIndex = row * 2 + 1;
+            control.AccessibleName = text;
+            card.Controls.Add(control, 1, row);
+        }
+        void Span(TableLayoutPanel card, Control control, int row)
+        {
+            LiveRows(card, row);
+            control.TabIndex = row * 2;
+            card.Controls.Add(control, 0, row);
+            card.SetColumnSpan(control, card.ColumnCount);
+        }
+        Button Details(TableLayoutPanel card, Control body, string text, int row)
+        {
+            body.Visible = false;
+            var button = SecondaryButton("Show " + text);
+            button.Enabled = true;
+            button.Margin = new Padding(6, 4, 6, 4);
+            button.AccessibleName = text;
+            button.Click += (_, _) =>
+            {
+                body.Visible = !body.Visible;
+                button.Text = (body.Visible ? "Hide " : "Show ") + text;
+            };
+            Span(card, button, row);
+            Span(card, body, row + 1);
+            return button;
+        }
+
+        var liveSource = LiveFields();
+        Span(liveSource, SectionTitle("Session"), 0);
+        LiveField(liveSource, 1, "Streaming app", _trackingSourceLive);
+        var statuses = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = false,
+            ColumnCount = 2, RowCount = 4, Margin = new Padding(6, 8, 6, 3) };
+        statuses.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        statuses.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        for (var row = 0; row < 4; row++) statuses.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var statusItems = new[]
         {
             ("Quest ADB", _usbStatus), ("SteamVR", _steamStatus), ("VRCFaceTracking", _vrcftStatus),
             ("Qpro module", _bridgeStatus), ("PC runtime", _runtimeStatus), ("Gaze support", _gazeStatus),
-            ("Lower-face inference", _inferenceStatus), ("Pupil processing", _pupilStatus),
+            ("Lower-face", _inferenceStatus), ("Pupil", _pupilStatus),
         };
         for (var index = 0; index < statusItems.Length; index++)
         {
-            var row = 1 + (index / 2) * 2;
-            var column = index % 2;
-            statuses.Controls.Add(new Label { Text = statusItems[index].Item1, AutoSize = true, ForeColor = Muted, Margin = new Padding(8, 2, 8, 2) }, column, row);
-            statuses.Controls.Add(statusItems[index].Item2, column, row + 1);
+            // A status wraps within its own cell at narrow widths instead of
+            // taking two fixed rows on every display.
+            var item = new FlowLayoutPanel { Dock = DockStyle.Top,
+                WrapContents = true, Margin = new Padding(0, 0, 12, 6), TabStop = false };
+            item.Controls.Add(new Label { Text = statusItems[index].Item1 + ":", AutoSize = true,
+                ForeColor = Muted, Margin = new Padding(0, 0, 6, 0) });
+            statusItems[index].Item2.Margin = Padding.Empty;
+            item.Controls.Add(statusItems[index].Item2);
+            statuses.Controls.Add(item, index % 2, index / 2);
         }
-        liveLayout.Controls.Add(statuses);
-
-        var liveSource = Card(); liveSource.Dock = DockStyle.Top;
-        liveSource.ColumnCount = 2;
-        liveSource.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        liveSource.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        liveSource.Controls.Add(SectionTitle("Face-tracking source"), 0, 0);
-        liveSource.SetColumnSpan(liveSource.GetControlFromPosition(0, 0)!, 2);
-        liveSource.Controls.Add(new Label { Text = "Streaming app", AutoSize = true, ForeColor = Muted, Margin = new Padding(8, 9, 8, 4) }, 0, 1);
-        liveSource.Controls.Add(_trackingSourceLive, 1, 1);
-        _trackingSourceLiveNote.Margin = new Padding(8, 2, 8, 8);
-        liveSource.Controls.Add(_trackingSourceLiveNote, 0, 2);
-        liveSource.SetColumnSpan(_trackingSourceLiveNote, 2);
+        bool fittingReadiness = false;
+        void FitLiveReadiness()
+        {
+            if (fittingReadiness) return;
+            fittingReadiness = true;
+            try
+            {
+                var rowHeights = new int[4];
+                for (var index = 0; index < statusItems.Length; index++)
+                {
+                    var item = (FlowLayoutPanel)statuses.GetControlFromPosition(index % 2, index / 2)!;
+                    var name = (Label)item.Controls[0];
+                    var value = statusItems[index].Item2;
+                    var width = Math.Max(100, statuses.ClientSize.Width / 2 - item.Margin.Horizontal);
+                    name.MaximumSize = value.MaximumSize = new Size(width, 0);
+                    var nameSize = name.PreferredSize;
+                    var valueSize = value.PreferredSize;
+                    item.Height = nameSize.Width + name.Margin.Horizontal + valueSize.Width <= width
+                        ? Math.Max(nameSize.Height, valueSize.Height) : nameSize.Height + valueSize.Height;
+                    rowHeights[index / 2] = Math.Max(rowHeights[index / 2], item.Height + item.Margin.Vertical);
+                }
+                // Fix the total to the measured rows. Otherwise WinForms can
+                // stretch the last flow row into blank space while autosizing.
+                statuses.Height = rowHeights.Sum();
+            }
+            finally { fittingReadiness = false; }
+        }
+        statuses.SizeChanged += (_, _) => FitLiveReadiness();
+        foreach (var (_, label) in statusItems) label.TextChanged += (_, _) => FitLiveReadiness();
+        Span(liveSource, statuses, 2);
+        var connectionDetails = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, Margin = Padding.Empty };
+        LiveRows(connectionDetails, 1);
+        _trackingSourceLiveNote.Margin = new Padding(6, 2, 6, 8);
+        connectionDetails.Controls.Add(_trackingSourceLiveNote);
+        connectionDetails.Controls.Add(ActionButton("Refresh connection status", (_, _) => { ReloadProfiles(); _ = RefreshStatusAsync(); }));
+        Details(liveSource, connectionDetails, "connection details", 3);
         liveLayout.Controls.Add(liveSource);
 
-        var tracking = Card();
-        tracking.Dock = DockStyle.Top;
-        tracking.ColumnCount = 2;
-        tracking.RowCount = 23;
-        tracking.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        tracking.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        tracking.Controls.Add(SectionTitle("Choose tracking features"), 0, 0);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 0)!, 2);
-        tracking.Controls.Add(Info("Choose the features you want, then press Start tracking below."), 0, 1);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 1)!, 2);
-        tracking.Controls.Add(_gaze, 0, 2); tracking.SetColumnSpan(_gaze, 2);
-        tracking.Controls.Add(new Label { Text = "Eye profile", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 3);
-        tracking.Controls.Add(_eyeProfiles, 1, 3);
-        tracking.Controls.Add(_tongue, 0, 4); tracking.SetColumnSpan(_tongue, 2);
-        tracking.Controls.Add(new Label { Text = "Lower-face model", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 5);
-        tracking.Controls.Add(_tongueModels, 1, 5);
-        tracking.Controls.Add(new Label { Text = "FPS cap", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 6);
-        tracking.Controls.Add(_fps, 1, 6);
-        tracking.Controls.Add(_tongueModelNote, 0, 7); tracking.SetColumnSpan(_tongueModelNote, 2);
-        var tuning = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Margin = new Padding(22, 4, 0, 7) };
-        tuning.Controls.Add(new Label { Text = "Motion smoothing", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 8, 5, 0) });
-        tuning.Controls.Add(_smoothing);
-        tuning.Controls.Add(new Label { Text = "Visibility", AutoSize = true, ForeColor = Muted, Margin = new Padding(10, 8, 5, 0) });
-        tuning.Controls.Add(_visibilityMode);
-        tracking.Controls.Add(tuning, 0, 8); tracking.SetColumnSpan(tuning, 2);
-        tracking.Controls.Add(_individualCheekPuff, 0, 9); tracking.SetColumnSpan(_individualCheekPuff, 2);
-        tracking.Controls.Add(new Label { Text = "Cheek puff style", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 10);
-        var cheekPuffActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = Padding.Empty };
+        var lowerFace = LiveFields();
+        Span(lowerFace, SectionTitle("Lower-face tracking"), 0);
+        LiveField(lowerFace, 1, "Lower-face model", _tongueModels);
+        _tongueModelNote.Margin = new Padding(6, 3, 6, 8);
+        Span(lowerFace, _tongueModelNote, 2);
+        Span(lowerFace, _tongue, 3);
+        Span(lowerFace, _cameraCheekPuff, 4);
+        _cameraCheekSourceNote.Margin = new Padding(6, 3, 6, 8);
+        Span(lowerFace, _cameraCheekSourceNote, 5);
+        Span(lowerFace, Info("Choose a model and enable the camera features you want. Restart tracking after changing the model or Camera cheek puff."), 6);
+        var cameraSettings = LiveFields();
+        cameraSettings.BackColor = Inset;
+        cameraSettings.Padding = new Padding(8);
+        cameraSettings.Margin = new Padding(0, 2, 0, 4);
+        LiveField(cameraSettings, 0, "FPS cap", _fps);
+        LiveField(cameraSettings, 1, "Motion smoothing", _smoothing);
+        LiveField(cameraSettings, 2, "Tongue visibility", _visibilityMode);
+        Span(cameraSettings, _cameraPreview, 3);
+        Span(cameraSettings, Info("FPS cap and camera preview also apply to pupil tracking. Hiding the preview keeps tracking active. Changes apply the next time tracking starts."), 4);
+        Details(lowerFace, cameraSettings, "camera settings", 7);
+        liveLayout.Controls.Add(lowerFace);
+
+        var pupilCard = LiveFields();
+        Span(pupilCard, SectionTitle("Pupil dilation"), 0);
+        Span(pupilCard, _pupil, 1);
+        LiveField(pupilCard, 2, "Pupil response", _pupilSensitivity);
+        Span(pupilCard, Info("Look straight and hold steady until both eyes finish warming up. Processing status is shown under Session."), 3);
+        liveLayout.Controls.Add(pupilCard);
+
+        var gazeCard = LiveFields();
+        Span(gazeCard, SectionTitle("Independent eye gaze"), 0);
+        Span(gazeCard, _gaze, 1);
+        LiveField(gazeCard, 2, "Eye profile", _eyeProfiles);
+        Span(gazeCard, Info("Keep this off while the Magisk gaze module is active. The Hub's gaze method briefly freezes the headset while restarting tracking; wait for Activity to confirm it is ready."), 3);
+        liveLayout.Controls.Add(gazeCard);
+
+        var nativeCard = LiveFields();
+        Span(nativeCard, SectionTitle("Native face adjustments"), 0);
+        Span(nativeCard, Info("Adjust the streaming app's cheek and eyebrow values. Changes update immediately through the Qpro module. Camera cheek strengths bypass the native puff style and calibration."), 1);
+        var nativeSettings = LiveFields();
+        nativeSettings.BackColor = Inset;
+        nativeSettings.Padding = new Padding(8);
+        nativeSettings.Margin = new Padding(0, 2, 0, 4);
+        Span(nativeSettings, _individualCheekPuff, 0);
+        var cheekPuffActions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill,
+            WrapContents = true, Margin = Padding.Empty };
         cheekPuffActions.Controls.Add(_cheekPuffStyle);
         cheekPuffActions.Controls.Add(_calibrateCheekPuff);
-        tracking.Controls.Add(cheekPuffActions, 1, 10);
-        tracking.Controls.Add(Info("Calibrated gives a smooth response from relaxed to full puff, using the developer baseline until you calibrate. Calibrate each streaming app with its Qpro module running in VRCFaceTracking. 1/0 selects a full-strength cheek; Balanced is gentler. Turn off for native values. Changes take effect immediately."), 0, 11);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 11)!, 2);
-        tracking.Controls.Add(_individualCheekSuck, 0, 12); tracking.SetColumnSpan(_individualCheekSuck, 2);
-        tracking.Controls.Add(new Label { Text = "Cheek suck style", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 13);
-        tracking.Controls.Add(_cheekSuckStyle, 1, 13);
-        tracking.Controls.Add(Info("Strong selects the leading cheek suck side; Balanced is gentler. Turn off for the streaming app's original values. Changes take effect immediately."), 0, 14);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 14)!, 2);
-        tracking.Controls.Add(_eyebrowBoost, 0, 15); tracking.SetColumnSpan(_eyebrowBoost, 2);
-        tracking.Controls.Add(new Label { Text = "Eyebrow sensitivity", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 16);
-        tracking.Controls.Add(_eyebrowSensitivity, 1, 16);
-        tracking.Controls.Add(Info("Adjust left and right brow movement separately from 0.50× to 3.00×. Turn off for native values. Gaze and blinks stay unchanged."), 0, 17);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 17)!, 2);
-        tracking.Controls.Add(_pupil, 0, 18); tracking.SetColumnSpan(_pupil, 2);
-        tracking.Controls.Add(new Label { Text = "Pupil response", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 19);
-        tracking.Controls.Add(_pupilSensitivity, 1, 19);
-        tracking.Controls.Add(Info("Pupil tracking is experimental. Response runs from 1.0× to 3.0× in 0.2× steps. Look straight and hold steady until both eyes finish warming up. Independent gaze briefly restarts headset tracking when applied or restored."), 0, 20);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 20)!, 2);
-        tracking.Controls.Add(_cameraPreview, 0, 21); tracking.SetColumnSpan(_cameraPreview, 2);
-        tracking.Controls.Add(Info("Turn this off to hide the live camera windows. Tongue and pupil tracking will continue. Changes take effect the next time you start tracking."), 0, 22);
-        tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 22)!, 2);
-        liveLayout.Controls.Add(tracking);
-        var cameraCheeks = Card(); cameraCheeks.Dock = DockStyle.Top;
-        cameraCheeks.Controls.Add(_cameraCheekPuff);
-        cameraCheeks.Controls.Add(Info("Uses a trained tongue + cheeks copy selected under Lower-face model. Quick refinement and Full dataset include cheek camera poses. This is a separate experimental option; turn it off to use your selected native cheek puff style. Restart Qpro tracking after changing it."));
-        liveLayout.Controls.Add(cameraCheeks);
-        var refresh = ActionButton("Refresh connection status", (_, _) => { ReloadProfiles(); _ = RefreshStatusAsync(); });
-        refresh.Dock = DockStyle.Top;
-        liveLayout.Controls.Add(refresh);
+        LiveField(nativeSettings, 1, "Cheek puff style", cheekPuffActions);
+        Span(nativeSettings, _individualCheekSuck, 2);
+        LiveField(nativeSettings, 3, "Cheek suck style", _cheekSuckStyle);
+        Span(nativeSettings, _eyebrowBoost, 4);
+        LiveField(nativeSettings, 5, "Eyebrow sensitivity", _eyebrowSensitivity);
+        var nativeHelp = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1, Margin = Padding.Empty };
+        LiveRows(nativeHelp, 1);
+        nativeHelp.Controls.Add(Info("Cheek puff: Calibrated gives a smooth relaxed-to-full response, using the developer baseline until you calibrate. Calibrate with the current streaming app's Qpro module running. 1/0 selects a full-strength cheek; Balanced is gentler."));
+        nativeHelp.Controls.Add(Info("Cheek suck: Strong selects the leading side; Balanced is gentler. Eyebrow sensitivity ranges from 0.50× to 3.00×. Turn each adjustment off for native values. Gaze and blinks stay unchanged."));
+        Details(nativeSettings, nativeHelp, "native adjustment details", 6);
+        Details(nativeCard, nativeSettings, "cheek and eyebrow controls", 2);
+        liveLayout.Controls.Add(nativeCard);
+
+        // Keep a readable content width on 4K displays without forcing small
+        // windows to scroll sideways.
+        void FitLiveWidth()
+        {
+            var scale = DeviceDpi / 96F;
+            int Px(int logical) => Math.Max(1, (int)Math.Ceiling(logical * scale));
+            var extra = Math.Max(0, livePage.Width - Px(1160) - Px(44)
+                - SystemInformation.VerticalScrollBarWidth);
+            livePage.Padding = new Padding(Px(22), Px(8), Px(22) + extra, Px(20));
+        }
+        livePage.SizeChanged += (_, _) => FitLiveWidth();
+        FitLiveWidth();
 
         var setupPage = NewPage();
         var setupLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 6 };
@@ -574,7 +664,7 @@ internal sealed partial class HubForm
             FitSidebarWidth();
             shell.SuspendLayout();
             main.SuspendLayout();
-            tracking.SuspendLayout();
+            lowerFace.SuspendLayout();
             try
             {
                 int TextHeight(Control control) => (int)Math.Ceiling(control.Font.GetHeight()) + Px(10);
@@ -586,7 +676,6 @@ internal sealed partial class HubForm
                 footerIdentity.RowStyles[0].Height = Math.Max(Px(30), TextHeight(_runStatus));
                 shell.RowStyles[1].Height = Math.Max(Px(110), footer.Padding.Vertical
                     + (int)footerIdentity.RowStyles[0].Height + creditHeight * 2 + Px(8));
-                liveLayout.RowStyles[3].Height = Px(52);
                 var sidebarTextWidth = Math.Max(Px(90), sidebar.Width - sidebar.Padding.Horizontal - Px(18));
                 var brandSubtitleHeight = TextRenderer.MeasureText(brandSubtitle.Text, brandSubtitle.Font,
                     new Size(sidebarTextWidth, int.MaxValue), TextFormatFlags.WordBreak).Height;
@@ -597,12 +686,12 @@ internal sealed partial class HubForm
                 for (var row = 1; row <= 5; row++)
                     sidebar.RowStyles[row].Height = Math.Max(Px(52), TextHeight(tabs[row - 1]) + Px(12));
                 FitSidebarHeight();
-                tracking.ColumnStyles[0].Width = Math.Max(Px(160),
-                    Math.Max(TextRenderer.MeasureText("Eyebrow sensitivity", Font).Width,
-                        TextRenderer.MeasureText("Lower-face model", Font).Width) + Px(64));
+                foreach (var card in liveFieldTables)
+                    card.ColumnStyles[0].Width = Math.Max(Px(160),
+                        TextRenderer.MeasureText("Eyebrow sensitivity", Font).Width + Px(24));
+                FitLiveWidth();
                 connectionPicker.ColumnStyles[0].Width = Px(155);
                 setupSource.ColumnStyles[0].Width = Px(155);
-                liveSource.ColumnStyles[0].Width = Px(160);
                 foreach (TableLayoutPanel card in setupCards.Controls)
                 {
                     var actionCount = card.GetControlFromPosition(0, 4) is TableLayoutPanel actions ? actions.RowCount : 1;
@@ -610,7 +699,7 @@ internal sealed partial class HubForm
                 }
                 choices.Height = Px(1200);
 
-                foreach (var toggle in new[] { _gaze, _tongue, _pupil, _cameraPreview,
+                foreach (var toggle in new[] { _gaze, _tongue, _pupil, _cameraPreview, _cameraCheekPuff,
                     _individualCheekPuff, _individualCheekSuck, _eyebrowBoost })
                     toggle.Height = Math.Max(Px(38), (int)Math.Ceiling(toggle.Font.GetHeight()) + Px(14));
                 _fps.Width = Px(84);
@@ -636,7 +725,7 @@ internal sealed partial class HubForm
             }
             finally
             {
-                tracking.ResumeLayout(true);
+                lowerFace.ResumeLayout(true);
                 main.ResumeLayout(true);
                 shell.ResumeLayout(true);
             }
