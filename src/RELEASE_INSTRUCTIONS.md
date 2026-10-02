@@ -112,7 +112,9 @@ If you have facial hair or wear a bandage near the mouth, keep it as you normall
 
 Quick refinement and Full dataset make a combined tongue-and-cheek model when you complete the cheek cards. The older **Focused diagonals + facial hair** workflow still trains tongue outputs only. Old tongue-only captures and imported models remain usable; importing them does not add camera cheek outputs.
 
-To try a combined model, select it under **Live tracking > Lower-face model**, turn on **Camera cheek puff (experimental)** and restart tracking. It predicts separate left and right strengths between 0 and 1 from the mouth cameras. It can run with tongue tracking off. Camera cheek output does not use the short native cheek calibration or its response style. Turning it off, stopping Qpro, or losing its live camera feed returns cheek puff to your selected native cheek settings.
+To try a combined model, open **Live tracking > Lower-face tracking**, choose it under **Lower-face model** and turn on **Camera cheek puff (experimental)**. Selecting the model alone does not enable camera cheeks. The message below that switch explains the selected cheek source. Stop and restart tracking to apply the change; **Activity** reports which camera outputs were requested and the loaded model paths.
+
+The model predicts separate left and right strengths between 0 and 1 from the mouth cameras. It can run with tongue tracking off. Camera cheek output does not use the short native cheek calibration or its response style. Turning it off, stopping Qpro, or losing its live camera feed returns cheek puff to your selected native cheek settings.
 
 The **Experimental tongue + cheeks model** card on **Personalize** lets you add just the 21 cheek cards to a new copy of an existing tongue model. Choose **Parent tongue model**, press **1. Record cheek camera poses**, then choose the completed recording and press **2. Train tongue + cheeks copy**. This freezes the tongue model while learning its cheek outputs; the original model stays saved. Test the new copy with fresh poses before relying on it. Camera cheek tracking remains experimental and may need a personal recording for another face or headset fit.
 
@@ -150,7 +152,7 @@ Use **Check gaze setup** in **First-time setup** to read the headset's current e
 If either recovery action refuses to proceed, keep its **Activity** error and ask for help with the exact firmware build. Recovery does not add support for an unsupported eye-tracking engine.
 
 
-**Preview tracking cameras** lets you hide the camera windows without turning tracking off. Change it before starting the next session. **Pupil response** makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
+In **Lower-face tracking**, open **Show camera settings** to find **Preview tracking cameras**, **FPS cap**, **Motion smoothing** and **Tongue visibility**. Hiding the camera windows does not turn tracking off. Change preview visibility before starting the next session. **Pupil response**, in the **Pupil dilation** section, makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
 
 ### Pupil processing and performance
 
@@ -160,18 +162,18 @@ Qpro processes the latest eye pair instead of queuing old frames. Activity repor
 
 ### Choose your cheek puff response
 
-**Individual cheek puff** is on **Live tracking** and starts on with **1/0** selected. Choose a **Cheek puff style**:
+On **Live tracking**, open **Native face adjustments > Show cheek and eyebrow controls**. **Individual cheek puff** starts on with **1/0** selected. These controls adjust cheek puff from your streaming app when **Camera cheek puff (experimental)** is off or its output stops. Choose a **Cheek puff style**:
 
 - **Calibrated:** a smooth strength from relaxed to full puff, including values between 0 and 1. It uses your personal calibration for the selected streaming app, or the bundled developer cheek baseline until you make one. Separate developer baselines were measured on one Quest Pro through Virtual Desktop and Steam Link. They are a starting point; calibrate for your own face if the response is too weak or too strong.
 - **1/0:** a clear one-cheek puff becomes full strength on that side and zero on the other. Puffing both cheeks still moves both.
 - **Balanced:** gentler separation that keeps changes in cheek strength without using a calibration profile.
 
-Turn **Individual cheek puff** off to use the original cheek values from Virtual Desktop or Steam Link. The toggle and style take effect while tracking is running. If the VRCFaceTracking preview separates the cheeks but the avatar does not, check the avatar's parameters and blendshapes.
+With camera cheek output off, turn **Individual cheek puff** off to use the original cheek values from Virtual Desktop or Steam Link. The toggle and style take effect while tracking is running. If the VRCFaceTracking preview separates the cheeks but the avatar does not, check the avatar's parameters and blendshapes.
 
 ### Calibrate cheek puff for your face
 
 1. Keep the headset on and your chosen streaming app connected. Its matching Qpro module must be installed and tracking in VRCFaceTracking. **Qpro camera tracking does not need to be running.**
-2. On **Live tracking**, press **Calibrate cheek puff**. Confirm that the window says **Live cheek feed is ready**.
+2. On **Live tracking**, open **Native face adjustments > Show cheek and eyebrow controls** and press **Calibrate cheek puff**. Confirm that the window says **Live cheek feed is ready**.
 3. Relax both cheeks, press **Capture relaxed cheeks**, and hold still for three seconds.
 4. Puff only your own left cheek, keeping the right relaxed. Press **Capture left cheek** and hold for three seconds. Relax briefly afterward.
 5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds.
@@ -208,10 +210,11 @@ If Independent Eye Gaze fails to start or stops unexpectedly, the Hub turns it o
 | Steam Link source selected but no face or training labels arrive | In Steam Link **Advanced Settings**, turn on **OSC**, **Share eye tracking data**, and **Share face tracking data**; set **OSC Output Port** to **9015**. Close VRCFaceTracking and wait for its module process to exit, then press **Install Steam Link module** in the Hub. Reopen VRCFaceTracking. Remove other Steam Link VRCFaceTracking modules that would use the same port. |
 | Launcher says the tracking source does not match | Close VRCFaceTracking and wait for its module process to exit. Choose the intended **Streaming app** on **First-time setup**, install its Qpro module, reopen VRCFaceTracking, then retry. |
 | **Calibrate cheek puff** is waiting for live values | Keep the headset on and the selected streaming app connected. Start tracking in VRCFaceTracking with the matching Qpro module from this build. If the window reports the other streaming app, select the correct **Streaming app** in the Hub or install its matching module with VRCFaceTracking closed. Qpro camera tracking is not required. |
+| A combined model moves both cheeks but separate puffs do not respond | In **Lower-face tracking**, check the cheek-source message and enable **Camera cheek puff (experimental)** if you want the camera model. Restart tracking and check **Activity** for camera cheek output ON and the selected direction model. If it is already ON, keep the log: an unfamiliar face or headset fit can still need personal cheek capture. Native cheek calibration does not train the camera model. |
 | AMD Ryzen integrated graphics appears during ROCm setup | Qpro checks for one of the exact discrete Radeon models in the ROCm 10.0 table above. An integrated GPU alone is not enough. Check that Windows and the AMD driver can see the discrete card; otherwise use **Install runtime** for NVIDIA CUDA or CPU. |
 | Independent gaze or convergence fails but ordinary face tracking works | Check the Quest's exact firmware build. Follow the [Singularity Magisk setup in section 1](#1-set-up-eye-tracking-and-independent-gaze-first); it has been reported working on Horizon OS v2.7. |
 | Tongue disappears in some positions | Check that your **newly trained model** actually loaded in Activity. Record those positions again and retrain. |
-| Facial hair or a bandage makes tongue training unreliable | Record a personal dataset with the same face appearance you use for tracking. Capture hidden and visible tongue poses, then check the trained model in Live tracking. If native visibility flickers while the cameras still see your tongue, try **Camera only** under **Visibility**. This may help but is not guaranteed for every face or headset fit. |
+| Facial hair or a bandage makes tongue training unreliable | Record a personal dataset with the same face appearance you use for tracking. Capture hidden and visible tongue poses, then check the trained model in Live tracking. If native visibility flickers while the cameras still see your tongue, try **Camera only** under **Show camera settings > Tongue visibility**. This may help but is not guaranteed for every face or headset fit. |
 | Pupils seem too jumpy | Lower **Pupil response** and hold your gaze steady while tracking warms up. |
 
 If Windows will not let you delete an older extracted Qpro folder, close its Hub and camera preview first. If the folder is still in use, open **Task Manager > Details**, end a leftover `adb.exe` process, then try again. Ending `adb.exe` temporarily disconnects any other Android tools using that ADB server.

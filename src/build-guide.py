@@ -38,7 +38,7 @@ WHITE = colors.white
 ORANGE = colors.HexColor("#FFF1DC")
 
 BODY = ParagraphStyle("body", fontName="Helvetica", fontSize=9.5, leading=12.9,
-                      textColor=TEXT, spaceAfter=4.5)
+                      textColor=TEXT, spaceAfter=4.5, allowWidows=0, allowOrphans=0)
 SECTION_LEAD = ParagraphStyle("section lead", parent=BODY, keepWithNext=True)
 SMALL = ParagraphStyle("small", parent=BODY, fontSize=8.4, leading=11.3)
 TITLE = ParagraphStyle("title", parent=BODY, fontName="Helvetica-Bold", fontSize=23,

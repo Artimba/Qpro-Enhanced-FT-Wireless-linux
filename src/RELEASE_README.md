@@ -74,9 +74,13 @@ To return to cable tracking, choose **USB cable** on the setup page. **Disable W
 
 ## Camera preview windows
 
-On **Live tracking**, **Preview tracking cameras** controls whether the camera and tongue model windows appear. Turn it off before starting a session to hide the live camera windows. Tongue and pupil output keep running; the cameras are still used for tracking. The preference is saved for later launches and takes effect on the next tracking start. Guided tongue capture still opens its prompt window because the capture workflow needs it.
+On **Live tracking**, open **Lower-face tracking > Show camera settings**. **Preview tracking cameras** controls whether the camera and tongue model windows appear. Turn it off before starting a session to hide the live camera windows. Tongue and pupil output keep running; the cameras are still used for tracking. The preference is saved for later launches and takes effect on the next tracking start. Guided tongue capture still opens its prompt window because the capture workflow needs it.
 
 ## Face controls on Live tracking
+
+The **Lower-face tracking** section groups **Lower-face model**, tongue output and **Camera cheek puff (experimental)**. The cheek-source message explains whether camera cheeks are selected for the next start or native-source cheeks remain selected. Choosing a combined model alone does not enable its camera outputs. Stop and restart tracking after changing a camera feature or model.
+
+Open **Native face adjustments > Show cheek and eyebrow controls** for the streaming app's cheek calibration, puff/suck styles and eyebrow sensitivity. Native cheek puff settings apply when camera cheek output is off or has stopped; they do not reshape active camera predictions.
 
 **Individual cheek puff** starts on with **1/0** selected. **Calibrated** gives a smooth strength from 0 to 1, using a separate developer baseline for each streaming app until you press **Calibrate cheek puff** to record relaxed, left and right cheek poses. The earlier three-pose calibration and Balanced signal mapping have been restored. Four-pose test profiles stay saved but are not applied; use the developer baseline until you recalibrate. **Balanced** gives gentler separation. Turning the feature off uses the source's original values. Calibration requires the matching Qpro module from this build running in VRCFaceTracking; Qpro camera tracking can stay stopped.
 

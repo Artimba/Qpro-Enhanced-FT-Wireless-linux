@@ -4,7 +4,7 @@ This is the native Windows control app for the Quest Pro tracking package. The H
 
 ## Pages
 
-- **Live tracking:** connection status; independent gaze, tongue, individual cheek puff and suck controls, eyebrow response, and experimental relative pupil controls; persistent Start tracking and Stop tracking buttons. Cheek puff styles are Calibrated, 1/0 (the default), and Balanced. Turning Individual cheek puff off passes through the streaming app's original values.
+- **Live tracking:** compact Session status, Lower-face tracking, Pupil dilation, Independent eye gaze and Native face adjustments sections; persistent Start tracking and Stop tracking buttons. The model, tongue switch and camera-cheek switch share one section with explicit cheek-source guidance. Camera settings and native cheek/eyebrow controls expand when needed. Native cheek puff styles are Calibrated, 1/0 (the default), and Balanced. Turning Individual cheek puff off passes through the streaming app's original values when camera cheeks are not active.
 - **First-time setup:** USB/Wi-Fi connection selection and wireless enable, connect, and pairing controls; PC runtime, optional AMD ROCm installer, separate Virtual Desktop and Steam Link Qpro VRCFaceTracking module buttons, and gaze preparation. Installing one source module removes the other.
 - **Lower-face calibration (Personalize):** Quick refinement and Full dataset add 21 cheek camera cards after their tongue cards. Focused diagonals and facial hair remain tongue-only. Each has a separate dataset queue and publishes a complete new model pair. A separate cheek-only capture can extend an existing tongue model without changing its tongue weights.
 - **Model manager:** rename, export, import, and delete paired lower-face or historical tongue models.
@@ -15,6 +15,7 @@ This is the native Windows control app for the Quest Pro tracking package. The H
 - `Program.cs`: entry point, release self-test, and preview capture.
 - `HubForm.cs` and `HubLayoutV2.cs`: window state and page layout.
 - `HubWorkflows.cs` and `HubData.cs`: setup, tracking, capture, training, datasets, and model operations.
+- `HubCameraTrackingLaunch.cs`: validates camera selections and builds the arguments used by tracking startup. The same builder runs in the headless launch-selection tests.
 - `HubEnvironment.cs`: ADB connection and local dependency discovery.
 - `HubScriptFactory.cs`: launches package scripts with the selected Python and ADB environment.
 - `HubSystem.cs`, `HubTheme.cs`, and `HubControls.cs`: status updates, styling, and custom controls.
