@@ -2,6 +2,7 @@
 
 import struct
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -63,7 +64,7 @@ class PupilDilationTests(unittest.TestCase):
         self.assertAlmostEqual(tracker.update(sample((200.0, 200.0))), 5.0, delta=0.01)
 
     def test_relative_dilation_is_independent_per_eye(self) -> None:
-        tracker = RelativePupilTracker()
+        tracker = RelativePupilTracker(backend="cpu")
         baseline = np.hstack((eye(24), eye(24)))
         for _ in range(12):
             left, right = tracker.update(baseline, [0, 1])
@@ -172,7 +173,7 @@ class PupilDilationTests(unittest.TestCase):
             np.full((400, 400), 83, np.uint8),
             np.full((400, 400), 120, np.uint8),
         ))
-        tracker = RelativePupilTracker()
+        tracker = RelativePupilTracker(backend="cpu")
         for _ in range(12):
             left, right = tracker.update(strip, [0, 1, 2, 3, 4])
         self.assertAlmostEqual(left, 5.0, delta=0.3)
@@ -181,6 +182,44 @@ class PupilDilationTests(unittest.TestCase):
         self.assertEqual(mouth.shape, (400, 800))
         self.assertTrue(np.all(mouth[:, :400] == 42))
         self.assertTrue(np.all(mouth[:, 400:] == 83))
+
+    def test_gpu_initialization_failure_uses_cpu(self) -> None:
+        with patch("pupil_gpu.TorchPupilPreprocessor", side_effect=RuntimeError("driver unavailable")):
+            tracker = RelativePupilTracker()
+        self.assertEqual((tracker.backend, tracker.device), ("cpu", "cpu"))
+        self.assertEqual(tracker.device_name, "CPU")
+        self.assertIn("driver unavailable", tracker.backend_notice)
+        strip = np.hstack((eye(24), eye(24)))
+        for _ in range(12):
+            values = tracker.update(strip, [0, 1])
+        self.assertAlmostEqual(values[0], 5.0, delta=0.3)
+
+    def test_gpu_runtime_failure_preserves_eye_baselines(self) -> None:
+        tracker = RelativePupilTracker(backend="cpu")
+        strip = np.hstack((eye(24), eye(24)))
+        for _ in range(12):
+            values = tracker.update(strip, [0, 1])
+        baselines = tuple(eye_tracker._baseline for eye_tracker in tracker.eyes)
+        class BrokenGpu:
+            def median(self, images):
+                raise RuntimeError()
+        tracker._gpu = BrokenGpu()
+        tracker.backend, tracker.device = "amd-rocm", "cuda:0"
+        self.assertEqual(tracker.update(strip, [0, 1]), values)
+        self.assertEqual(tuple(eye_tracker._baseline for eye_tracker in tracker.eyes), baselines)
+        self.assertEqual((tracker.backend, tracker.device), ("cpu", "cpu"))
+        self.assertEqual(tracker.device_name, "CPU")
+        self.assertIsNone(tracker._gpu)
+        self.assertIn("switched to CPU", tracker.backend_notice)
+
+    def test_missing_eye_invalidates_only_that_eye(self) -> None:
+        tracker = RelativePupilTracker(backend="cpu")
+        for _ in range(12):
+            values = tracker.update(np.hstack((eye(24), eye(24))), [0, 1])
+        left, right = tracker.update(eye(24), [1])
+        self.assertEqual((left, right), values)
+        self.assertIn("holding last estimate", tracker.eyes[0].status)
+        self.assertEqual(tracker.eyes[1].status, "tracking")
 
 
 if __name__ == "__main__":

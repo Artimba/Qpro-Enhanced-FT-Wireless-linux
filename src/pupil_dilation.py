@@ -21,6 +21,13 @@ CAMERA_WIDTH = 400
 CAMERA_HEIGHT = 400
 PUPIL_PACKET = struct.Struct("<4sBBHff")
 PUPIL_MAGIC = b"QPDI"
+_CLOSE_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+_OPEN_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+
+def _error_summary(exc: Exception) -> str:
+    lines = str(exc).splitlines()
+    return f"{type(exc).__name__}: {lines[0] if lines else 'no further detail'}"
 
 
 @dataclass(frozen=True)
@@ -37,26 +44,47 @@ def detect_pupil(
     """Find a dark pupil despite small tracking-LED reflections."""
     if image.shape != (CAMERA_HEIGHT, CAMERA_WIDTH) or image.dtype != np.uint8:
         raise ValueError("Pupil detection expects one 400x400 grayscale eye frame")
-    x0, y0 = 55, 75
-    roi = image[y0:355, x0:390]
+    roi = image[75:355, 55:390]
     if np.ptp(roi) < 18 or np.mean(roi) < 8:
         return None
     # Median filtering removes bright headset LED glints inside the pupil.
     clean = cv2.medianBlur(roi, 7)
+    return _detect_clean_pupil(clean, _cpu_masks(clean, _thresholds(clean)), previous_center)
+
+
+def _thresholds(clean: np.ndarray) -> list[int]:
     low = int(np.min(clean))
-    thresholds = sorted(set(
+    return sorted(set(
         [low + 10, low + 20]
         + [int(v) for v in np.percentile(clean, (5, 10, 15, 20, 25, 30))]
     ))
-    close_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-    open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    best: tuple[float, PupilDetection] | None = None
+
+
+def _cpu_masks(clean: np.ndarray, thresholds: list[int]) -> list[np.ndarray]:
+    masks = []
     for threshold in thresholds:
         dark = cv2.threshold(clean, threshold, 255, cv2.THRESH_BINARY_INV)[1]
-        dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, close_kernel)
-        dark = cv2.morphologyEx(dark, cv2.MORPH_OPEN, open_kernel)
+        dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, _CLOSE_KERNEL)
+        masks.append(cv2.morphologyEx(dark, cv2.MORPH_OPEN, _OPEN_KERNEL))
+    return masks
+
+
+def _detect_clean_pupil(
+    clean: np.ndarray, masks: list[np.ndarray],
+    previous_center: tuple[float, float] | None,
+) -> PupilDetection | None:
+    x0, y0 = 55, 75
+    best: tuple[float, PupilDetection] | None = None
+    seen_contours: set[bytes] = set()
+    for dark in masks:
         contours, _ = cv2.findContours(dark, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
+            # Several thresholds often produce the same boundary. Its score
+            # uses the same median image, so evaluating it again adds no signal.
+            key = contour.tobytes()
+            if key in seen_contours:
+                continue
+            seen_contours.add(key)
             area = cv2.contourArea(contour)
             if not 100 <= area <= 6500 or len(contour) < 5:
                 continue
@@ -64,7 +92,7 @@ def detect_pupil(
             major, minor = max(axes), min(axes)
             if not 14 <= major <= 75 or minor < 10 or minor / major < 0.48:
                 continue
-            if not 15 <= x <= roi.shape[1] - 15 or not 15 <= y <= roi.shape[0] - 15:
+            if not 15 <= x <= clean.shape[1] - 15 or not 15 <= y <= clean.shape[0] - 15:
                 continue
             ellipse_area = np.pi * major * minor / 4
             fill = area / ellipse_area
@@ -75,13 +103,20 @@ def detect_pupil(
             if circularity < 0.42:
                 continue
             # Require the fitted shape to be darker than its immediate annulus.
-            inner = np.zeros(roi.shape, np.uint8)
-            outer = np.zeros(roi.shape, np.uint8)
-            cv2.ellipse(inner, ((x, y), (axes[0] * 0.70, axes[1] * 0.70), angle), 255, -1)
-            cv2.ellipse(outer, ((x, y), (axes[0] * 1.90, axes[1] * 1.90), angle), 255, -1)
-            cv2.ellipse(outer, ((x, y), (axes[0] * 1.20, axes[1] * 1.20), angle), 0, -1)
-            inside = clean[inner != 0]
-            ring = clean[outer != 0]
+            # Only allocate masks around the ellipse, not the entire eye ROI.
+            # Integer translation preserves OpenCV's rasterized ellipse.
+            radius = int(np.ceil(major * 0.95)) + 3
+            left, top = max(0, int(x) - radius), max(0, int(y) - radius)
+            right, bottom = min(clean.shape[1], int(x) + radius + 1), min(clean.shape[0], int(y) + radius + 1)
+            patch = clean[top:bottom, left:right]
+            inner = np.zeros(patch.shape, np.uint8)
+            outer = np.zeros(patch.shape, np.uint8)
+            local_center = (x - left, y - top)
+            cv2.ellipse(inner, (local_center, (axes[0] * 0.70, axes[1] * 0.70), angle), 255, -1)
+            cv2.ellipse(outer, (local_center, (axes[0] * 1.90, axes[1] * 1.90), angle), 255, -1)
+            cv2.ellipse(outer, (local_center, (axes[0] * 1.20, axes[1] * 1.20), angle), 0, -1)
+            inside = patch[inner != 0]
+            ring = patch[outer != 0]
             if inside.size < 20 or ring.size < 30:
                 continue
             inside_median = float(np.median(inside))
@@ -192,25 +227,74 @@ class RelativePupilEye:
 
 
 class RelativePupilTracker:
-    def __init__(self, sensitivity: float = 1.4) -> None:
+    def __init__(self, sensitivity: float = 1.4, backend: str = "auto", device: str = "auto") -> None:
+        if backend not in ("auto", "gpu", "cpu"):
+            raise ValueError("Pupil backend must be auto, gpu, or cpu")
         self.eyes = (RelativePupilEye(sensitivity=sensitivity), RelativePupilEye(sensitivity=sensitivity))
         self.detections: tuple[PupilDetection | None, PupilDetection | None] = (None, None)
         self._previous_centers: list[tuple[float, float] | None] = [None, None]
+        self.backend = "cpu"
+        self.device = "cpu"
+        self.device_name = "CPU"
+        self.backend_notice = ""
+        self._gpu = None
+        if backend != "cpu":
+            try:
+                from pupil_gpu import TorchPupilPreprocessor
+                self._gpu = TorchPupilPreprocessor(device)
+                self.backend = self._gpu.backend
+                self.device = self._gpu.device
+                self.device_name = self._gpu.name
+            except Exception as exc:
+                self.backend_notice = f"GPU pupil processing unavailable; using CPU: {_error_summary(exc)}"
+
+    def _detect_eyes(self, images: dict[int, np.ndarray]) -> dict[int, PupilDetection | None]:
+        results: dict[int, PupilDetection | None] = {eye: None for eye in images}
+        valid_rois = {}
+        for eye, image in images.items():
+            if image.shape != (CAMERA_HEIGHT, CAMERA_WIDTH) or image.dtype != np.uint8:
+                raise ValueError("Pupil detection expects one 400x400 grayscale eye frame")
+            roi = image[75:355, 55:390]
+            if np.ptp(roi) >= 18 and np.mean(roi) >= 8:
+                valid_rois[eye] = roi
+        if not valid_rois:
+            return results
+        eye_ids = list(valid_rois)
+        prepared = None
+        if self._gpu is not None:
+            try:
+                clean_batch, gpu_clean = self._gpu.median(list(valid_rois.values()))
+                masks = self._gpu.masks(gpu_clean, [_thresholds(clean) for clean in clean_batch])
+                prepared = list(zip(clean_batch, masks))
+            except Exception as exc:
+                # Discard the incomplete batch. Both eyes use one CPU path,
+                # retaining their existing baselines and smoothing state.
+                self.backend_notice = f"GPU pupil processing failed; switched to CPU: {_error_summary(exc)}"
+                self._gpu = None
+                self.backend = "cpu"
+                self.device = "cpu"
+                self.device_name = "CPU"
+        if prepared is None:
+            prepared = []
+            for roi in valid_rois.values():
+                clean = cv2.medianBlur(roi, 7)
+                prepared.append((clean, _cpu_masks(clean, _thresholds(clean))))
+        for eye, (clean, masks) in zip(eye_ids, prepared):
+            results[eye] = _detect_clean_pupil(clean, masks, self._previous_centers[eye])
+        return results
 
     def update(
         self, strip: np.ndarray, camera_ids: list[int]
     ) -> tuple[float | None, float | None]:
         results: list[float | None] = []
         detections: list[PupilDetection | None] = []
+        images = {
+            eye: strip[:, camera_ids.index(eye) * CAMERA_WIDTH:(camera_ids.index(eye) + 1) * CAMERA_WIDTH]
+            for eye in (0, 1) if eye in camera_ids
+        }
+        found = self._detect_eyes(images)
         for eye_id in (0, 1):
-            if eye_id not in camera_ids:
-                detection = None
-            else:
-                offset = camera_ids.index(eye_id) * CAMERA_WIDTH
-                detection = detect_pupil(
-                    strip[:, offset:offset + CAMERA_WIDTH],
-                    self._previous_centers[eye_id],
-                )
+            detection = found.get(eye_id)
             if detection is not None and detection.confidence >= 0.20:
                 self._previous_centers[eye_id] = detection.center
             detections.append(detection)
