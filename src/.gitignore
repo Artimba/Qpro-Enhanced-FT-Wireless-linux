@@ -11,6 +11,8 @@ training/
 config/wireless-headset.json
 config/hub-opened.txt
 research/seacliff_eye_model/*.ptl
+research/vrcft-qpro-module-switch-backup-*/
+*.qpsession.json
 *.qpcap
 *.qplabel
 *.npy

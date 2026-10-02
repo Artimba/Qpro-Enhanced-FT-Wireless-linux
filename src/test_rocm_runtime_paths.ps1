@@ -36,10 +36,10 @@ function Add-FixtureEnvironment([string]$Path, [string]$Tier = 'experimental-roc
 }
 
 try {
-    $reportedRelease = 'C:\Users\THE PC\Documents\Qpro enhanced face tracking\QproFaceTracking V2.1.0 Fix Test\QproRuntime'
+    $reportedRelease = 'C:\Fixtures\A PC\Documents\Qpro enhanced face tracking\QproFaceTracking V2.1.0 Fix Test\QproRuntime'
     $reportedEnv = Join-Path $reportedRelease '.venv-rocm-experimental'
-    $compact = Get-QproRocmInstallEnvironment '10' 'gfx1100' '' 'C:\Users\THE PC\AppData\Local'
-    Assert-Equal 'C:\Users\THE PC\AppData\Local\QproFaceTracking\r\10-gfx1100' $compact 'Reported PC automatic storage'
+    $compact = Get-QproRocmInstallEnvironment '10' 'gfx1100' '' 'C:\Fixtures\A PC\AppData\Local'
+    Assert-Equal 'C:\Fixtures\A PC\AppData\Local\QproFaceTracking\r\10-gfx1100' $compact 'Reported PC automatic storage'
     Assert-QproRocmPathBudget $compact
     try {
         Assert-QproRocmPathBudget $reportedEnv

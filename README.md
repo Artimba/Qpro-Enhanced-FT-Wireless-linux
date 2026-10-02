@@ -8,7 +8,7 @@ A Windows Hub for enhanced face tracking on a **rooted Meta Quest Pro**, based o
 
 The **latest [VRCFaceTracking from Steam](https://store.steampowered.com/app/3329480/VRCFaceTracking/)** is required. If you used a Qpro version before V2.0, record and train a new tongue model. Working V2.0 through V2.0.2 models can be exported and imported into V2.1.2 through **Model manager**.
 
-The developer **v8** tongue model remains the default. **Mustachio** is a separate, opt-in, highly experimental extension of v8 trained with one bearded and moustached wearer. It has no independent clean-shaven validation yet. Quick refinement and Focused training extend the model selected under **Live tracking > Tongue model**, including Mustachio; copies made from an experimental model retain that status.
+The developer **v8** tongue model remains the default. **Mustachio** is a separate, opt-in, highly experimental extension of v8 trained with one bearded and moustached wearer. It has no independent clean-shaven validation yet. Quick refinement and Focused training extend the tongue model selected under **Live tracking > Lower-face model**, including Mustachio; copies made from an experimental model retain that status.
 
 ## Guides
 
@@ -34,3 +34,9 @@ For help, share relevant Hub **Activity** lines in the [community Discord](https
 - [Lumince and the Singularity contributors](https://github.com/Lumince/singularity) created the headset root project used by this workflow.
 - [danwillm](https://github.com/danwillm/VRCFT-SteamLink) and the [LinkFT contributors](https://github.com/ykeara/LinkFT) documented the Steam Link tracking source used by Qpro's module.
 - Fwooffy wrote the original [beginner Quest root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md), and [glorpette](https://github.com/glorpette/quest-guides) made and hosts its GitHub version.
+
+## Lower-face calibration and GPU pupil processing
+
+Quick refinement and Full dataset include 21 cheek camera cards and train separate left/right puff outputs alongside tongue tracking. Select a combined model under **Live tracking > Lower-face model** and enable **Camera cheek puff (experimental)** to try them. Existing tongue-only models and native cheek calibration remain available. Camera cheek strengths range from 0 to 1 and need a personal capture when another face or fit differs.
+
+Pupil image filtering can use a verified NVIDIA CUDA or AMD ROCm runtime. Geometry and smoothing still run on CPU, with automatic CPU fallback and backend/performance messages in **Activity**. The camera loop uses the latest frames and avoids encoding unused previews.

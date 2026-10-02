@@ -20,11 +20,22 @@ Follow the PDF guide included in the ZIP, or use the [text setup instructions](h
 - **AMD ROCm setup:** Added checks for the required PyTorch host, device and SDK packages. Missing `torchgen` or incomplete host-package metadata triggers a targeted repair. Python import failures are now reported separately from GPU detection failures.
 - **ROCm long-path installation failure:** New installations use a compact per-user Qpro folder instead of the extracted release's nested path. The installer checks its path budget before downloading, and the Hub, tracking and training helpers find the shared environment after it passes GPU checks. Existing environments and recordings are kept. Long-path, download-index and other package failures now have separate messages.
 - **AMD GPU selection:** Improved recognition of Radeon driver name variants, including `RX6700XT`. Qpro checks actual HIP device order, excludes integrated graphics and verifies that the selected card matches the installed GPU target. GPU visibility settings inherited from another application are cleared only within Qpro's ROCm process.
-- **Cheek calibration rollback:** Restored the earlier three-pose calibration: relaxed, left cheek and right cheek. Removed the four-pose overlap fit and restored its previous Balanced signal mapping and calibrated response. Further calibration changes will wait for live headset testing.
+- **Cheek calibration rollback:** Restored the earlier three-pose calibration: relaxed, left cheek and right cheek. Removed the four-pose overlap fit and restored its previous Balanced signal mapping and calibrated response. Native calibration remains available; the new camera-cheek model is a separate opt-in path.
 - **Saved cheek profiles:** Earlier three-pose profiles remain usable. Four-pose test profiles are kept on disk but are not applied; Calibrated uses the selected source's bundled developer baseline until a new three-pose calibration is saved. The 1/0, Balanced and native options remain available.
 - **Hub shutdown:** Closing the Hub waits for tracking cleanup and recovery of the recorded pre-Qpro eye-model state, then stops the configured PC ADB server. Pending status checks cannot restart it. Other Android tools using that shared server will disconnect.
 - **Gaze preparation diagnostics:** Unsupported engines now report the exact firmware build and explain that tracking was left unchanged. A read-only diagnostic mode reports compatibility information without copying headset models. This does not add support for the reported Horizon OS V2.4 engine.
 - **Setup guide:** Updated the PDF and text instructions to explain using one independent gaze method at a time, the temporary headset freeze when applying the Hub's gaze method, and what **Stop tracking** restores.
+
+## Lower-face and pupil updates
+
+- **Lower-face calibration:** Quick refinement and Full dataset append 21 cheek camera cards. Their labels come from the requested pose instead of relying on native cheek detection. Focused tongue captures and older tongue-only models remain compatible.
+- **Experimental developer cheeks:** Bundled a separate Developer tongue + cheeks copy of v8, trained on one wearer. Added light and half-strength cheek examples after the initial live test showed weak gentle puffs. The revised model preserves the original tongue outputs. A short VRChat check on the training wearer confirmed better gentle right-puff response and separate sides. Quantitative strength checks and broader wearer validation are pending. The original v8 remains the default.
+- **Camera cheek puff:** Added optional left/right camera predictions with continuous strengths between 0 and 1. The new control can run alongside tongue tracking or by itself. Stopped, disabled or expired camera output falls back to the selected native cheek settings.
+- **Preserved tongue models:** Adding cheek outputs freezes the parent tongue model. Training creates a new paired model; a failed cheek stage does not publish an incomplete result. Existing recordings and models stay saved.
+- **GPU pupil filtering:** Both eye images can use a verified NVIDIA CUDA or AMD ROCm runtime. Contour fitting, quality checks and smoothing remain on CPU. GPU errors fall back to CPU with an Activity message.
+- **Camera workload:** Eye processing uses the latest frame pair and drops superseded work. Unused MJPEG previews are no longer encoded. Activity includes backend, processing time, frame age and dropped-frame diagnostics.
+
+On the connected RX 7900 XTX, the pupil-only live check maintained approximately 24 FPS with 9–13 ms processing time. A recorded 161-frame comparison matched the CPU pupil results exactly and reduced median processing time from 14.6 ms to 9.9 ms. A three-minute combined check with tongue, camera cheeks and pupils maintained a median 23.9 FPS across all five cameras; median pupil processing was 12.7 ms. This is one PC; NVIDIA and slower-PC performance still need physical testing.
 
 ## Updating and testing
 
@@ -36,7 +47,7 @@ To compare ordinary face tracking, stop Qpro tracking, close VRCFaceTracking and
 
 Use **Calibrate cheek puff** on **Live tracking** and complete all three poses when your headset is available. Each streaming app keeps its own profile. Earlier three-pose profiles remain compatible; four-pose test profiles are ignored without deleting them.
 
-Working tongue models from V2.0 onward can be exported through **Model manager** in the old version and imported into this build as a `.qptonguemodel` file. No tongue retraining is required for these fixes. Preserve your original folder and recordings while testing.
+Working tongue models from V2.0 onward can be exported through **Model manager** in the old version and imported into this build as a `.qptonguemodel` file. No tongue retraining is required to keep using their tongue outputs. Camera cheek outputs require a new cheek or combined lower-face capture. Preserve your original folder and recordings while testing.
 
 ## Test status
 

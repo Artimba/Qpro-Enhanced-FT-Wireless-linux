@@ -7,7 +7,7 @@ captured stereo stills, then compares the pair with
 the bundled v8 demonstration pair on **different capture sessions**. It does
 not change the original v8 files, the release package, or the Hub's selected model.
 
-The Full dataset now has 58 fixed-pose cards: hidden mouth expressions,
+The tongue portion of Full dataset has 58 fixed-pose cards: hidden mouth expressions,
 extension strengths, cardinal and diagonal directions, intermediate X/Y
 combinations, and matched hidden/visible fit and mouth conditions. Plan about
 60–120 minutes for a careful capture. The compact Quick refinement remains
@@ -210,3 +210,13 @@ finished. The offline gate and live review determine that step. Externally
 trained checkpoint pairs may be compared diagnostically with `--candidate-gate`
 and `--candidate-direction`; their training split cannot be verified by this
 tool, so those pairs cannot be staged through `--stage`.
+
+## Experimental camera cheek head
+
+The Hub now records 21 cheek cards after Quick refinement or Full dataset's tongue cards. Those sessions use `lower-face-refinement-v1` and `lower-face-stills-v1`; historical tongue journals remain supported. Cheek cards provide approximate left/right puff fractions from the requested pose. They are excluded from tongue supervision, including the last three cheek cards where the tongue is visible.
+
+`prepare_cheek_stills.py` validates the complete cheek curriculum and prepares its camera examples. `train_cheek_model.py` freezes the existing tongue branch, normalizes only its shared features for the new cheek head and learns independent left/right strengths. The resulting direction checkpoint uses `cheek-augmented-` architecture and appends `cheekPuffLeft` and `cheekPuffRight`; the visibility gate keeps the original tongue target schema. CPU and GPU parity tests protect the parent tongue outputs.
+
+`train-latest-cheeks.ps1` can add these cheek outputs to a separate paired copy of an existing tongue model. Quick/Full helpers stage their tongue results privately, rebuild the cheek head from the same new capture and publish only the complete pair. Refining a combined model first extracts its original tongue parent; an old cheek head is not reused after the tongue backbone changes.
+
+The bundled experimental developer cheek candidate uses one wearer's recordings. Held-out repetitions and fresh holds from that wearer are useful checks, but do not establish accuracy on another wearer, fit, beard or streaming app. Preserve the original developer model and require separate live evaluation before promoting a new baseline. Release assets must omit camera recordings, journals, caches and absolute training paths.

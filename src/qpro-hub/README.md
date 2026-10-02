@@ -6,8 +6,8 @@ This is the native Windows control app for the Quest Pro tracking package. The H
 
 - **Live tracking:** connection status; independent gaze, tongue, individual cheek puff and suck controls, eyebrow response, and experimental relative pupil controls; persistent Start tracking and Stop tracking buttons. Cheek puff styles are Calibrated, 1/0 (the default), and Balanced. Turning Individual cheek puff off passes through the streaming app's original values.
 - **First-time setup:** USB/Wi-Fi connection selection and wireless enable, connect, and pairing controls; PC runtime, optional AMD ROCm installer, separate Virtual Desktop and Steam Link Qpro VRCFaceTracking module buttons, and gaze preparation. Installing one source module removes the other.
-- **Tongue personalization:** quick refinement, focused diagonal and facial-hair capture, and full dataset capture. Each has a separate dataset queue and trains a new personal model.
-- **Model manager:** rename, export, import, and delete personal tongue models.
+- **Lower-face calibration (Personalize):** Quick refinement and Full dataset add 21 cheek camera cards after their tongue cards. Focused diagonals and facial hair remain tongue-only. Each has a separate dataset queue and publishes a complete new model pair. A separate cheek-only capture can extend an existing tongue model without changing its tongue weights.
+- **Model manager:** rename, export, import, and delete paired lower-face or historical tongue models.
 - **Activity:** setup, training, tracking, and error output.
 
 ## Source layout
@@ -27,3 +27,7 @@ The interface uses per-monitor DPI awareness. Text widths and the sidebar respon
 Calibrated cheek puff maps relaxed and full strengths to a continuous 0..1 response with brief smoothing. Separate bundled developer baselines were measured on one Quest Pro through Virtual Desktop and Steam Link. These give a starting point until a personal profile is available for the selected source; response varies by wearer. Calibrate cheek puff with the headset streaming and the selected Qpro module tracking in VRCFaceTracking; Qpro camera tracking is not needed.
 
 The pupil option is experimental. Its image and packet tests pass, and relative pupil animation has been live tested on a Quest Pro in VRChat. A Hub build or screenshot preview alone does not verify camera and avatar behavior on other systems.
+
+**Camera cheek puff (experimental)** uses normalized camera predictions independently of native cheek calibration. It needs a combined model selected under Lower-face model and starts off. Disable it to use the selected native cheek style. Camera UDP has a 500 ms lease; stopped or expired output falls back to native values.
+
+Pupil image preprocessing can use a verified GPU runtime. CPU handles contour geometry and smoothing. Latest-frame workers and subscriber-only JPEG encoding bound queued work; Activity reports backend and timing.

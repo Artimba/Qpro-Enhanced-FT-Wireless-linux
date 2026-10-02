@@ -54,7 +54,7 @@ If Windows will not let you delete an older extracted Qpro folder, close its Hub
 
 The developer **v8** tongue model remains the default. **Mustachio** is a separate, opt-in, highly experimental extension of v8 trained with one bearded and moustached wearer. Independent clean-shaven validation and broader wearer testing are pending; it may perform worse for some people. Its contrast processing cannot recover tongue detail completely hidden by hair.
 
-Quick refinement and Focused training extend the model selected under **Live tracking > Tongue model**. Copies made from Mustachio retain their experimental status through training, renaming, export, and import. Full dataset makes a new personal model instead.
+Quick refinement and Focused training extend the model selected under **Live tracking > Lower-face model**. Copies made from Mustachio retain their experimental status through training, renaming, export, and import. Full dataset makes a new personal model instead.
 
 Personal camera captures, training arrays, personal cheek profiles, saved headset addresses, and generated eye patches are not included in the release ZIP. Approved model weights and developer cheek baselines are included; raw recordings stay private. Share camera captures only with the wearer's permission. Maintainers can use the source-only [developer tongue training guide](DEVELOPER_TONGUE_TRAINING.md) to evaluate further candidates against independent captures before promoting them.
 
@@ -72,3 +72,9 @@ The Windows Hub is in [`qpro-hub/`](qpro-hub/), the VRCFaceTracking module in [`
 - **Fwooffy** created the original [beginner Quest root guide](https://github.com/glorpette/quest-guides/blob/main/root_guide_by_fwooffy.md). **[glorpette](https://github.com/glorpette/quest-guides)** made and hosts its GitHub version.
 
 For help, share relevant **Activity** lines in the [community Discord](https://discord.gg/ghvuJTpRu4). The server is not owned by Fwooffy. This project is unaffiliated with Meta, Virtual Desktop, VRCFaceTracking, or VRChat.
+
+## Lower-face calibration and camera cheeks
+
+Quick refinement has 37 cards (16 tongue and 21 cheek); Full dataset has 79 cards (58 tongue and 21 cheek). Cheek cards use guided pose strengths rather than native cheek labels. The optional **Developer tongue + cheeks** model preserves developer v8 tongue weights and adds a cheek head trained on one wearer. Enable **Camera cheek puff (experimental)** after selecting a compatible combined model to use separate continuous camera strengths. Keep the original v8 model available while testing; gentle puff responses and other wearers need further validation.
+
+Pupil image filtering can run on verified NVIDIA CUDA or AMD ROCm devices. Quality checks, contour geometry and smoothing remain on CPU. The worker processes the latest eye pair, falls back to CPU when needed, and reports timing and backend in Activity. Unused MJPEG streams are not encoded.

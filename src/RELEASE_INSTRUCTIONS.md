@@ -87,30 +87,40 @@ To remove Qpro's VRCFaceTracking add-on later, first press **Stop tracking**. Cl
 
 Qpro installs [AMD TheRock ROCm 10.0 packages](https://github.com/ROCm/TheRock/blob/main/RELEASES.md) for the detected card's [GPU target](https://rocm.docs.amd.com/en/latest/reference/gpu-specs.html). These are AMD's stable packages, while their use in Qpro remains **experimental**. AMD's package index includes Windows device packages for the [RX 6750/6700 family (gfx1031)](https://stable.repo.amd.com/rocm/whl-next/amd-torch-device-gfx1031/) and [RX 6650/6600 family (gfx1032)](https://stable.repo.amd.com/rocm/whl-next/amd-torch-device-gfx1032/). Package availability does not guarantee driver compatibility on every card. Confirm the Hub prompt and allow time for a large download. [AMD's ROCm 10.0 matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html) validates Windows 11 25H2 with Adrenalin 26.8.1; other Windows 11 builds or drivers may fail the GPU checks. Qpro enables the new environment only after GPU training and model inference tests pass. Integrated graphics and unlisted Radeon models are not eligible. If setup fails, read the full **Activity** error.
 
-New ROCm installations use a short, shared Qpro folder under `%LOCALAPPDATA%\QproFaceTracking\r`, with a separate folder for the card's GPU target. For example, an RX 7900 XT uses `10-gfx1100`. This avoids long library paths caused by extracting Qpro into a deeply nested folder. You normally do not need to change Windows registry settings. Qpro also keeps verified older `.venv-rocm-experimental` installations available. If this extracted copy has a **verified** `.venv-rocm` installation on a card in [AMD's Windows ROCm 7.2.1 list](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityrad/windows/windows_compatibility.html), Qpro keeps it as a fallback when ROCm 10.0 is not ready. The Hub shows whether 10.0 is verified or the older fallback is available. An RX 7900 XTX was live-tested with the older ROCm 7.2.1 path; the ROCm 10.0 Qpro path still needs live tests on the listed cards.
+New ROCm installations use a short, shared Qpro folder under `%LOCALAPPDATA%\QproFaceTracking\r`, with a separate folder for the card's GPU target. For example, an RX 7900 XT uses `10-gfx1100`. This avoids long library paths caused by extracting Qpro into a deeply nested folder. You normally do not need to change Windows registry settings. Qpro also keeps verified older `.venv-rocm-experimental` installations available. If this extracted copy has a **verified** `.venv-rocm` installation on a card in [AMD's Windows ROCm 7.2.1 list](https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityrad/windows/windows_compatibility.html), Qpro keeps it as a fallback when ROCm 10.0 is not ready. The Hub shows whether 10.0 is verified or the older fallback is available. An RX 7900 XTX has been live-tested with both the older ROCm 7.2.1 path and the new ROCm 10.0 path. Other mapped cards still need physical checks; sharing a GPU target does not prove every model or driver works.
 
-**NVIDIA GPU or CPU:** skip the AMD button. NVIDIA CUDA hardware has been live-tested and is functional. When tracking starts, **Activity** tells you whether the tongue model is using AMD, NVIDIA, or CPU.
+**NVIDIA GPU or CPU:** skip the AMD button. NVIDIA CUDA hardware has been live-tested and is functional. When tracking starts, **Activity** tells you whether lower-face inference and pupil processing are using AMD, NVIDIA, or CPU.
 
-## 6. Record and train your tongue model
+## 6. Lower-face calibration: record and train tongue and cheeks
 
 **Train if you have no personal model or used a version before V2.0. You can import a working V2.0 through V2.0.2 model into V2.1.2.** The bundled models were trained on other wearers.
 
-1. For Quick refinement or Focused training, choose the model you want to extend under **Live tracking > Tongue model** before training. Developer v8 is the default. Full dataset makes a new personal model instead.
+1. For Quick refinement or Focused training, choose the model you want to extend under **Live tracking > Lower-face model** before training. Developer v8 is the default. Full dataset makes a new personal model instead.
 2. Open **Personalize** and choose a capture mode below.
 3. Follow each pose card, hold the pose steady, and press **SPACE** once per still. Save at least the on-screen minimum for every card before pressing **ENTER** to continue. Include the side and **diagonal** positions; missing a pose can leave a tracking gap there.
 4. When recording finishes, choose it in the training list and press that mode's training button. Wait for Activity to say training finished. Select the resulting model when you restart tracking in section 7.
 
-- **Quick refinement - 10–20 min:** press **1. Record refinement**, then **2. Train personalized copy**. This is the shortest way to adapt the selected model to your face.
+- **Quick refinement - 15–30 min:** press **1. Record refinement**, then **2. Train personalized copy**. Its 37 cards refine the selected tongue model and include 21 cheek camera cards for left, right and two-cheek puff strengths.
 - **Focused diagonals + facial hair - 15–30 min:** press **1. Record focused dataset**, then **2. Train focused copy**. Its 22 cards add diagonal positions and matched hidden/visible poses for facial-hair shadows.
-- **Full dataset - 60–120 min:** press **1. Record full dataset**, then **2. Train new personal model**. Its 58 cards cover more mouth poses, directions, and tongue extension strengths. Take breaks as needed.
+- **Full dataset - 60–120 min:** press **1. Record full dataset**, then **2. Train new personal model**. Its 79 cards record the full tongue curriculum followed by 21 cheek camera cards, including relaxed cheeks, different puff strengths and non-puff expressions. Take breaks as needed.
 
-If you have facial hair or wear a bandage near the mouth, keep it as you normally wear it during tracking. For every visible pose, check that the tongue can actually be seen in the two camera panels. Hold one pose per still; vary your jaw or headset position slightly between stills. Record hidden poses too, so beard shadows and smiles are not mistaken for tongue movement. Hair that completely covers the tongue cannot be removed by training or contrast processing. The capture screen waits for fresh VRCFaceTracking factory packets; it does not require the native face values to move before recording.
+If you have facial hair or wear a bandage near the mouth, keep it as you normally wear it during tracking. For every visible pose, check that the tongue can actually be seen in the two camera panels. Hold one pose per still; vary your jaw or headset position slightly between stills. Record hidden poses too, so beard shadows and smiles are not mistaken for tongue movement. Hair that completely covers the tongue cannot be removed by training or contrast processing. Tongue cards wait for fresh VRCFaceTracking factory packets; the native face values do not need to change. Cheek cards use the pose shown on screen as their training label, so a weak native cheek signal does not block them. Follow the requested strengths approximately; these are animation targets, not measured air pressure.
+
+### Using camera cheek puff
+
+**Developer tongue + cheeks** is an optional experimental copy of developer v8 with camera cheek outputs trained on one wearer. The original developer v8 remains the default, and its tongue weights are unchanged in this copy. Another wearer or headset fit may need personal calibration.
+
+Quick refinement and Full dataset make a combined tongue-and-cheek model when you complete the cheek cards. The older **Focused diagonals + facial hair** workflow still trains tongue outputs only. Old tongue-only captures and imported models remain usable; importing them does not add camera cheek outputs.
+
+To try a combined model, select it under **Live tracking > Lower-face model**, turn on **Camera cheek puff (experimental)** and restart tracking. It predicts separate left and right strengths between 0 and 1 from the mouth cameras. It can run with tongue tracking off. Camera cheek output does not use the short native cheek calibration or its response style. Turning it off, stopping Qpro, or losing its live camera feed returns cheek puff to your selected native cheek settings.
+
+The **Experimental tongue + cheeks model** card on **Personalize** lets you add just the 21 cheek cards to a new copy of an existing tongue model. Choose **Parent tongue model**, press **1. Record cheek camera poses**, then choose the completed recording and press **2. Train tongue + cheeks copy**. This freezes the tongue model while learning its cheek outputs; the original model stays saved. Test the new copy with fresh poses before relying on it. Camera cheek tracking remains experimental and may need a personal recording for another face or headset fit.
 
 ### Trying Mustachio
 
 **Mustachio is highly experimental and optional.** It extends developer v8 with a focused capture from one bearded and moustached wearer. Independent clean-shaven testing and broader facial-hair testing are still pending, so it may perform worse for some people. Developer v8 remains available and is the default.
 
-To try it, choose **Mustachio** under **Live tracking > Tongue model**, then restart tracking. Its contrast processing is selected automatically by the model; it does not invent hidden tongue pixels or remove hair. Quick refinement and Focused training can extend this selected model. Those copies retain the **highly experimental** label, including after renaming, export, and import. Choosing Full dataset starts a new personal model.
+To try it, choose **Mustachio** under **Live tracking > Lower-face model**, then restart tracking. Its contrast processing is selected automatically by the model; it does not invent hidden tongue pixels or remove hair. Quick refinement and Focused training can extend this selected model. Those copies retain the **highly experimental** label, including after renaming, export, and import. Choosing Full dataset starts a new personal model.
 
 After training, **Activity** lists the weakest held-out pose cards and diagonal corners. `missed` counts visible-tongue frames that the selected visibility gate marked hidden; `fnr` is that count divided by visible frames. These are checks on held-out frames from the same recording, so try the model live as well.
 
@@ -121,7 +131,7 @@ To remove a recording you no longer need, stay on **Personalize**. Under its mat
 ## 7. Start tracking
 
 1. Start your selected **Virtual Desktop** or **Steam Link** app on the Quest, then SteamVR and VRCFaceTracking on the PC. Steam Link users should confirm its OSC and eye/face sharing settings above.
-2. In the Hub, open **Live tracking**. Independent Eye Gaze starts off; select it, tongue tracking, pupil dilation, or the combination you want. **If you installed Singularity's Independent Eye Gaze Magisk module, leave the Hub's Independent Eye Gaze option off.** For tongue tracking, choose the **new model you just trained** under **Tongue model**. If tracking is already running, press **Stop tracking** first so the new model loads when tracking restarts.
+2. In the Hub, open **Live tracking**. Independent Eye Gaze starts off; select it, tongue tracking, pupil dilation, or the combination you want. **If you installed Singularity's Independent Eye Gaze Magisk module, leave the Hub's Independent Eye Gaze option off.** For tongue tracking, choose the **new model you just trained** under **Lower-face model**. If tracking is already running, press **Stop tracking** first so the new model loads when tracking restarts.
 3. Press **Start tracking**. Open **Activity** if you want to see whether the camera connected and which device is running the tongue model.
 4. When you finish, press **Stop tracking**. Wait until Activity confirms that the live processes have stopped. If you used the Hub's gaze method, also wait for its gaze recovery result: it restores the headset eye-model state recorded before that Qpro session.
 
@@ -141,6 +151,12 @@ If either recovery action refuses to proceed, keep its **Activity** error and as
 
 
 **Preview tracking cameras** lets you hide the camera windows without turning tracking off. Change it before starting the next session. **Pupil response** makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
+
+### Pupil processing and performance
+
+Pupil tracking automatically uses a verified NVIDIA CUDA or AMD ROCm runtime when one is available. Filtering both eye images is batched on the GPU; contour fitting, quality checks and smoothing still use the CPU. If GPU processing is unavailable or fails, Qpro reports the fallback in **Activity** and continues on CPU. The **Pupil processing** status shows the current backend.
+
+Qpro processes the latest eye pair instead of queuing old frames. Activity reports processing time, frame age and skipped work so a slow PC is easier to diagnose. Camera previews encode only the streams somebody is viewing. Close unused browser previews if performance is poor; GPU support cannot guarantee a particular frame rate on every PC.
 
 ### Choose your cheek puff response
 

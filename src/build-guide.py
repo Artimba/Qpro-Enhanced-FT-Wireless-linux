@@ -49,7 +49,8 @@ H2 = ParagraphStyle("section", parent=BODY, fontName="Helvetica-Bold", fontSize=
                     leading=18, textColor=DEEP, spaceBefore=11, spaceAfter=6,
                     keepWithNext=True)
 H3 = ParagraphStyle("subsection", parent=BODY, fontName="Helvetica-Bold", fontSize=10.8,
-                    leading=14, textColor=ACCENT, spaceBefore=8, spaceAfter=4)
+                    leading=14, textColor=ACCENT, spaceBefore=8, spaceAfter=4,
+                    keepWithNext=True)
 STEP_NO = ParagraphStyle("step number", parent=BODY, fontName="Helvetica-Bold",
                          fontSize=10, textColor=ACCENT, spaceAfter=0)
 TABLE_HEAD = ParagraphStyle("table head", parent=SMALL, fontName="Helvetica-Bold",

@@ -5,6 +5,7 @@ param(
     [string]$AssetRoot = "",
     [string]$VrcftInstallDir = "",
     [string]$ExperimentalTongueModelRoot = "",
+    [string]$CameraCheekModelRoot = "",
     [string]$TestNotesPath = ""
 )
 
@@ -141,6 +142,15 @@ $runtimeFiles = @(
     "receiver.py",
     "qpro_gpu.py",
     "pupil_dilation.py",
+    "pupil_gpu.py",
+    "pupil_inference.py",
+    "cheek_camera.py",
+    "cheek_still_capture.py",
+    "prepare_cheek_stills.py",
+    "train_cheek_model.py",
+    "train_cheek_pair.py",
+    "train-latest-cheeks.ps1",
+    "lower_face_training.py",
     "pupil_gaze_calibration.py",
     "capture_format.py",
     "calibration.py",
@@ -199,6 +209,39 @@ if (-not [string]::IsNullOrWhiteSpace($ExperimentalTongueModelRoot)) {
         $destination = Join-Path $runtimeRoot ("models\" + $name)
         if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item -LiteralPath $source).Length -eq 0) { throw "Experimental model file is missing or empty: $name" }
         if (Test-Path -LiteralPath $destination) { throw "Experimental model would replace an existing model: $name" }
+        Copy-Item -LiteralPath $source -Destination $destination
+        $runtimeFiles += "models\$name"
+    }
+}
+if (-not [string]::IsNullOrWhiteSpace($CameraCheekModelRoot)) {
+    $cameraModelRoot = [System.IO.Path]::GetFullPath($CameraCheekModelRoot)
+    $cameraMetadataFiles = @(Get-ChildItem -LiteralPath $cameraModelRoot -File -Filter 'qpro-stereo-tongue-v*.metadata.json')
+    if ($cameraMetadataFiles.Count -ne 1) { throw 'The camera cheek model folder must identify exactly one paired model.' }
+    $cameraMetadataFile = $cameraMetadataFiles[0]
+    $cameraMetadata = Get-Content -LiteralPath $cameraMetadataFile.FullName -Raw | ConvertFrom-Json
+    if ($cameraMetadataFile.Name -notmatch '^qpro-stereo-tongue-v(?<version>\d+)\.metadata\.json$') { throw 'Invalid camera cheek model filename.' }
+    $cameraVersion = [int]$Matches.version
+    if ($cameraVersion -le 8 -or $cameraMetadata.version -ne $cameraVersion -or
+        $cameraMetadata.format -ne 'qpro-tongue-model-metadata-v1' -or
+        $cameraMetadata.modelKind -ne 'camera-cheeks-experimental' -or
+        $cameraMetadata.isExperimental -ne $true -or $cameraMetadata.hasCameraCheeks -ne $true -or
+        $cameraMetadata.cheekTraining.frozenTongueParent -ne $true) {
+        throw 'Camera cheek models require explicit experimental metadata and a frozen tongue parent.'
+    }
+    # This bundled candidate extends the developer v8 direction model. Keep its
+    # original visibility gate, and include only sanitized public model assets.
+    $cameraGate = Join-Path $cameraModelRoot "qpro-stereo-tongue-v$cameraVersion-gate.pt"
+    $developerGate = Join-Path $runtimeRoot 'models\qpro-stereo-tongue-v8-gate.pt'
+    if (-not (Test-Path -LiteralPath $cameraGate -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $cameraGate -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $developerGate -Algorithm SHA256).Hash) {
+        throw 'The bundled camera cheek candidate must preserve the developer v8 visibility gate.'
+    }
+    foreach ($name in @("qpro-stereo-tongue-v$cameraVersion-gate.pt", "qpro-stereo-tongue-v$cameraVersion-direction.pt", $cameraMetadataFile.Name)) {
+        $source = Join-Path $cameraModelRoot $name
+        $destination = Join-Path $runtimeRoot ("models\" + $name)
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf) -or (Get-Item -LiteralPath $source).Length -eq 0) { throw "Camera cheek model file is missing or empty: $name" }
+        if (Test-Path -LiteralPath $destination) { throw "Camera cheek model would replace an existing model: $name" }
         Copy-Item -LiteralPath $source -Destination $destination
         $runtimeFiles += "models\$name"
     }
