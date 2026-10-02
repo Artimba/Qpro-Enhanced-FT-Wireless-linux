@@ -7,6 +7,7 @@ from unittest import mock
 import numpy as np
 
 from receiver import SharedPreview, handle_key
+from cheek_camera import CHEEK_PACKET, CameraCheekBroadcaster
 from tongue_model_preview import (
     TONGUE_MAGIC,
     TONGUE_PACKET,
@@ -210,6 +211,51 @@ class TongueVrcftOutputTests(unittest.TestCase):
             worker.close()
             if closer is not None:
                 closer.join(timeout=1)
+
+    def test_hidden_tongue_and_disabled_tongue_output_keep_independent_camera_cheeks(self):
+        poses = [(0.8, 0.0), (0.3, 0.0), (0.0, 0.9), (0.0, 0.2), (0.7, 0.6)]
+
+        class Preview:
+            target_names = list(TONGUE_TARGET_NAMES) + ["cheekPuffLeft", "cheekPuffRight"]
+
+            def predict(self, strip, _sample, _names):
+                values = np.zeros(12, dtype=np.float32)
+                values[-2:] = poses[int(strip[0, 0])]
+                return TonguePrediction(values, 0, 0, False, 1)
+
+        tongue_socket = mock.Mock()
+        cheek_socket = mock.Mock()
+        with mock.patch("cheek_camera.socket.socket", side_effect=[tongue_socket, cheek_socket]):
+            tongue = TongueBroadcaster(enabled=False)
+            cheeks = CameraCheekBroadcaster(enabled=True)
+        worker = TongueInferenceWorker(Preview(), tongue, render_preview=False,
+                                       cheek_broadcaster=cheeks)
+        try:
+            for index, pose in enumerate(poses):
+                # Each pose represents a new 24 Hz frame; skip real-time waits
+                # without changing the production publication path.
+                cheeks._last_sent = 0
+                worker.submit(np.asarray([[index]], dtype=np.uint8), None, [])
+                deadline = time.monotonic() + 1
+                while time.monotonic() < deadline:
+                    prediction, _image = worker.latest()
+                    if prediction is not None and np.allclose(prediction.values[-2:], pose):
+                        break
+                    time.sleep(0.001)
+                else:
+                    self.fail(f"Worker did not finish cheek pose {pose}")
+                packet, address = cheek_socket.sendto.call_args.args
+                magic, version, enabled, reserved, left, right = CHEEK_PACKET.unpack(packet)
+                self.assertEqual((magic, version, enabled, reserved), (b"QPCO", 1, 1, 0))
+                self.assertEqual(address, ("127.0.0.1", 27279))
+                self.assertAlmostEqual(left, pose[0], places=6)
+                self.assertAlmostEqual(right, pose[1], places=6)
+                self.assertFalse(prediction.visible)
+            tongue_socket.sendto.assert_not_called()
+        finally:
+            worker.close()
+            cheeks.close()
+            tongue.close()
 
 
 if __name__ == "__main__":

@@ -24,6 +24,33 @@ catch (Exception error)
 
 void RunChecks()
 {
+    foreach (string nativeStyle in new[] { "Off", "Balanced", "Strong", "Calibrated" })
+    {
+        using var f = new Fixture();
+        f.ConfigureCheekStyle(nativeStyle);
+        f.Native(faceFlags: 1, eyeFollowing: true, eyesValid: true,
+            leftCheek: .62f, rightCheek: .65f);
+        // A fresh camera model supplies continuous, independently trained
+        // cheek strengths. Native cheek calibration must not map those a
+        // second time or turn a unilateral camera pose into a bilateral one.
+        foreach ((float left, float right) in new[]
+        {
+            (.82f, 0f), (.35f, 0f), (0f, .74f), (0f, .23f),
+            (.9f, .85f), (.4f, .3f), (0f, 0f), (.15f, .03f)
+        })
+        {
+            f.SendCameraCheeks(left, right);
+            f.Module.Update();
+            Near(Tongue(UnifiedExpressions.CheekPuffLeft), left,
+                $"camera left remains exact through {nativeStyle} native style");
+            Near(Tongue(UnifiedExpressions.CheekPuffRight), right,
+                $"camera right remains exact through {nativeStyle} native style");
+            Near(Tongue(UnifiedExpressions.TongueOut), .85f,
+                "changing camera cheek sides leaves native tongue active");
+            f.Time += 50;
+        }
+    }
+
     foreach (bool missingMap in new[] { false, true })
     {
         using var f = new Fixture();
@@ -270,7 +297,21 @@ sealed class Fixture : IDisposable
         Set("_needsEye", eyes); Set("_needsExpression", mouth);
     }
 
-    internal void Native(byte faceFlags, bool eyeFollowing, bool eyesValid)
+    internal void ConfigureCheekStyle(string style)
+    {
+        Assembly assembly = typeof(TrackingModule).Assembly;
+        Type mode = assembly.GetType("Qpro.GazeBridge.CheekPuffMode")!;
+        Type calibration = assembly.GetType("Qpro.Shared.CheekPuffCalibration")!;
+        Set("_cheekPuffMode", Enum.Parse(mode, style));
+        Set("_cheekPuffCalibration", Activator.CreateInstance(calibration,
+            [.03f, .4f, .02f, .5f]));
+        // Keep an offline fixture from reading or changing the user's saved
+        // Hub preferences while exercising each native mapping style.
+        Set("_nextCheekPuffModeCheckTick", long.MaxValue);
+    }
+
+    internal void Native(byte faceFlags, bool eyeFollowing, bool eyesValid,
+        float leftCheek = 0f, float rightCheek = 0f)
     {
         if (_view is null)
         {
@@ -282,6 +323,8 @@ sealed class Fixture : IDisposable
         state[0] = faceFlags;
         state[1] = (byte)(eyeFollowing ? 1 : 0);
         state[292] = state[293] = (byte)(eyesValid ? 1 : 0);
+        WriteFloat(state, 4 + 2 * 4, leftCheek);
+        WriteFloat(state, 4 + 3 * 4, rightCheek);
         WriteFloat(state, 4 + 63 * 4, .25f);
         WriteFloat(state, 4 + 64 * 4, .4f);
         WriteFloat(state, 4 + 68 * 4, .85f);
