@@ -80,11 +80,11 @@ internal sealed partial class HubForm
         var main = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = Background, Margin = Padding.Empty };
         main.RowStyles.Add(new RowStyle(SizeType.Absolute, 88));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(24, 16, 24, 7) };
+        var header = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(38, 16, 38, 7), Margin = Padding.Empty };
         header.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         header.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
-        var pageTitle = new Label { Dock = DockStyle.Fill, Font = new Font(UiFontName, 20F, FontStyle.Bold), ForeColor = Color.White, TextAlign = ContentAlignment.MiddleLeft };
-        var pageSubtitle = new Label { Dock = DockStyle.Fill, ForeColor = Muted, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true };
+        var pageTitle = new Label { Dock = DockStyle.Fill, Font = new Font(UiFontName, 20F, FontStyle.Bold), ForeColor = Color.White, TextAlign = ContentAlignment.MiddleLeft, Margin = Padding.Empty };
+        var pageSubtitle = new Label { Dock = DockStyle.Fill, ForeColor = Muted, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true, Margin = Padding.Empty };
         header.Controls.Add(pageTitle, 0, 0);
         header.Controls.Add(pageSubtitle, 0, 1);
         main.Controls.Add(header, 0, 0);
@@ -92,12 +92,25 @@ internal sealed partial class HubForm
         main.Controls.Add(pages, 0, 1);
         shell.Controls.Add(main, 1, 0);
 
+        void FitPageWidth(Panel page)
+        {
+            // All pages share the same readable column and leave small windows
+            // free to shrink without creating a horizontal scrollbar.
+            var scale = DeviceDpi / 96F;
+            int Px(int logical) => Math.Max(1, (int)Math.Ceiling(logical * scale));
+            var columnWidth = Math.Min(Px(1160), Math.Max(1,
+                page.Width - Px(44) - SystemInformation.VerticalScrollBarWidth));
+            var extra = Math.Max(0, page.ClientSize.Width - Px(44) - columnWidth);
+            page.Padding = new Padding(Px(22), Px(8), Px(22) + extra, Px(20));
+        }
         Panel NewPage()
         {
             // Each page scrolls independently while the tracking controls remain
             // fixed in the footer, including at small window sizes.
             var page = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Background, Padding = new Padding(22, 8, 22, 20), Visible = false, Tag = "hub-page" };
             pages.Controls.Add(page);
+            page.ClientSizeChanged += (_, _) => FitPageWidth(page);
+            FitPageWidth(page);
             return page;
         }
 
@@ -125,10 +138,12 @@ internal sealed partial class HubForm
         void LiveField(TableLayoutPanel card, int row, string text, Control control)
         {
             LiveRows(card, row);
-            card.Controls.Add(new Label { Text = text, AutoSize = true, ForeColor = Muted,
-                Margin = new Padding(6, 8, 10, 5), TabIndex = row * 2 }, 0, row);
+            var label = FieldLabel(text);
+            label.TabIndex = row * 2;
+            card.Controls.Add(label, 0, row);
             control.TabIndex = row * 2 + 1;
             control.AccessibleName = text;
+            control.Margin = new Padding(0, 3, 0, 3);
             card.Controls.Add(control, 1, row);
         }
         void Span(TableLayoutPanel card, Control control, int row)
@@ -143,7 +158,7 @@ internal sealed partial class HubForm
             body.Visible = false;
             var button = SecondaryButton("Show " + text);
             button.Enabled = true;
-            button.Margin = new Padding(6, 4, 6, 4);
+            button.Margin = new Padding(0, 4, 8, 4);
             button.AccessibleName = text;
             button.Click += (_, _) =>
             {
@@ -159,7 +174,7 @@ internal sealed partial class HubForm
         Span(liveSource, SectionTitle("Session"), 0);
         LiveField(liveSource, 1, "Streaming app", _trackingSourceLive);
         var statuses = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = false,
-            ColumnCount = 2, RowCount = 4, Margin = new Padding(6, 8, 6, 3) };
+            ColumnCount = 2, RowCount = 4, Margin = new Padding(0, 8, 0, 3) };
         statuses.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         statuses.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         for (var row = 0; row < 4; row++) statuses.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -214,7 +229,7 @@ internal sealed partial class HubForm
         var connectionDetails = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1, Margin = Padding.Empty };
         LiveRows(connectionDetails, 1);
-        _trackingSourceLiveNote.Margin = new Padding(6, 2, 6, 8);
+        _trackingSourceLiveNote.Margin = new Padding(0, 2, 0, 8);
         connectionDetails.Controls.Add(_trackingSourceLiveNote);
         connectionDetails.Controls.Add(ActionButton("Refresh connection status", (_, _) => { ReloadProfiles(); _ = RefreshStatusAsync(); }));
         Details(liveSource, connectionDetails, "connection details", 3);
@@ -223,11 +238,11 @@ internal sealed partial class HubForm
         var lowerFace = LiveFields();
         Span(lowerFace, SectionTitle("Lower-face tracking"), 0);
         LiveField(lowerFace, 1, "Lower-face model", _tongueModels);
-        _tongueModelNote.Margin = new Padding(6, 3, 6, 8);
+        _tongueModelNote.Margin = new Padding(0, 3, 0, 8);
         Span(lowerFace, _tongueModelNote, 2);
         Span(lowerFace, _tongue, 3);
         Span(lowerFace, _cameraCheekPuff, 4);
-        _cameraCheekSourceNote.Margin = new Padding(6, 3, 6, 8);
+        _cameraCheekSourceNote.Margin = new Padding(0, 3, 0, 8);
         Span(lowerFace, _cameraCheekSourceNote, 5);
         Span(lowerFace, Info("Choose a model and enable the camera features you want. Restart tracking after changing the model or Camera cheek puff."), 6);
         var cameraSettings = LiveFields();
@@ -266,9 +281,28 @@ internal sealed partial class HubForm
         Span(nativeSettings, _individualCheekPuff, 0);
         var cheekPuffActions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill,
             WrapContents = true, Margin = Padding.Empty };
-        cheekPuffActions.Controls.Add(_cheekPuffStyle);
+        var cheekPuffSelector = new Panel { Margin = Padding.Empty };
+        _cheekPuffStyle.Dock = DockStyle.None;
+        _cheekPuffStyle.Margin = Padding.Empty;
+        cheekPuffSelector.Controls.Add(_cheekPuffStyle);
+        cheekPuffActions.Controls.Add(cheekPuffSelector);
         cheekPuffActions.Controls.Add(_calibrateCheekPuff);
         LiveField(nativeSettings, 1, "Cheek puff style", cheekPuffActions);
+        var cheekPuffLabel = (Label)nativeSettings.GetControlFromPosition(0, 1)!;
+        // This row can wrap its button below the selector. Keep the caption
+        // aligned with the selector, rather than the combined wrapped height.
+        cheekPuffLabel.Dock = DockStyle.None;
+        cheekPuffLabel.AutoSize = false;
+        cheekPuffLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+        void FitCheekActions()
+        {
+            var lineHeight = Math.Max(_cheekPuffStyle.Height, _calibrateCheekPuff.Height);
+            cheekPuffSelector.Size = new Size(_cheekPuffStyle.Width + 12, lineHeight + 8);
+            _cheekPuffStyle.Location = new Point(0, (cheekPuffSelector.Height - _cheekPuffStyle.Height) / 2);
+            _calibrateCheekPuff.Margin = new Padding(0, 4, 0, 4);
+            cheekPuffLabel.Height = lineHeight + 8;
+        }
+        FitCheekActions();
         Span(nativeSettings, _individualCheekSuck, 2);
         LiveField(nativeSettings, 3, "Cheek suck style", _cheekSuckStyle);
         Span(nativeSettings, _eyebrowBoost, 4);
@@ -282,44 +316,34 @@ internal sealed partial class HubForm
         Details(nativeCard, nativeSettings, "cheek and eyebrow controls", 2);
         liveLayout.Controls.Add(nativeCard);
 
-        // Keep a readable content width on 4K displays without forcing small
-        // windows to scroll sideways.
-        void FitLiveWidth()
-        {
-            var scale = DeviceDpi / 96F;
-            int Px(int logical) => Math.Max(1, (int)Math.Ceiling(logical * scale));
-            var extra = Math.Max(0, livePage.Width - Px(1160) - Px(44)
-                - SystemInformation.VerticalScrollBarWidth);
-            livePage.Padding = new Padding(Px(22), Px(8), Px(22) + extra, Px(20));
-        }
-        livePage.SizeChanged += (_, _) => FitLiveWidth();
-        FitLiveWidth();
-
         var setupPage = NewPage();
-        var setupLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 6 };
+        var setupLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 6, Margin = Padding.Empty };
         setupLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (var row = 0; row < 6; row++) setupLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         setupPage.Controls.Add(setupLayout);
         var connectionCard = Card(); connectionCard.Dock = DockStyle.Top;
         connectionCard.ColumnCount = 1;
         connectionCard.Controls.Add(SectionTitle("Connect your Quest Pro"));
-        var connectionPicker = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(5, 3, 5, 7) };
-        connectionPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 155));
+        var connectionPicker = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 3, 0, 7) };
+        connectionPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         connectionPicker.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        connectionPicker.Controls.Add(new Label { Text = "Connection type", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 8, 8, 3) }, 0, 0);
+        connectionPicker.Controls.Add(FieldLabel("Connection type"), 0, 0);
+        ConfigureDropDown(_connectionMode);
+        _connectionMode.Margin = new Padding(0, 3, 0, 3);
         connectionPicker.Controls.Add(_connectionMode, 1, 0);
         connectionCard.Controls.Add(connectionPicker);
-        _connectionModeNote.Margin = new Padding(5, 2, 5, 8);
+        _connectionModeNote.Margin = new Padding(0, 2, 0, 8);
         connectionCard.Controls.Add(_connectionModeNote);
-        _wirelessSetup.Margin = new Padding(4, 3, 4, 8);
+        _wirelessSetup.Margin = new Padding(0, 3, 0, 8);
         _wirelessSetup.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         _wirelessSetup.Controls.Add(Info("Enter the Quest's Wi-Fi IP and press Connect to Quest. If it reports ready, skip pairing and start tracking. Use Pair and connect only when Android shows a six-digit pairing code; enter the temporary pairing IP:port from that dialog, which differs from the regular connection port. A one-time USB connection can also enable wireless ADB."));
         TableLayoutPanel ConnectionField(string title, TextBox input)
         {
-            var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(3, 2, 3, 6) };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 155));
+            var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 2, 0, 6) };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            row.Controls.Add(new Label { Text = title, AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 7, 8, 2) }, 0, 0);
+            row.Controls.Add(FieldLabel(title), 0, 0);
+            input.Margin = new Padding(0, 3, 0, 3);
             row.Controls.Add(input, 1, 0);
             return row;
         }
@@ -334,13 +358,14 @@ internal sealed partial class HubForm
         setupLayout.Controls.Add(connectionCard);
         var setupSource = Card(); setupSource.Dock = DockStyle.Top;
         setupSource.ColumnCount = 2;
-        setupSource.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 155));
+        setupSource.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
         setupSource.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         setupSource.Controls.Add(SectionTitle("Choose your PCVR streaming app"), 0, 0);
         setupSource.SetColumnSpan(setupSource.GetControlFromPosition(0, 0)!, 2);
-        setupSource.Controls.Add(new Label { Text = "Face source", AutoSize = true, ForeColor = Muted, Margin = new Padding(5, 8, 8, 3) }, 0, 1);
+        setupSource.Controls.Add(FieldLabel("Face source"), 0, 1);
+        _trackingSourceSetup.Margin = new Padding(0, 3, 0, 3);
         setupSource.Controls.Add(_trackingSourceSetup, 1, 1);
-        _trackingSourceSetupNote.Margin = new Padding(5, 2, 5, 8);
+        _trackingSourceSetupNote.Margin = new Padding(0, 2, 0, 8);
         setupSource.Controls.Add(_trackingSourceSetupNote, 0, 2);
         setupSource.SetColumnSpan(_trackingSourceSetupNote, 2);
         setupLayout.Controls.Add(setupSource);
@@ -352,7 +377,7 @@ internal sealed partial class HubForm
         _setupProgressContainer.AutoSize = true;
         _setupProgressContainer.ColumnCount = 1;
         _setupProgressContainer.BackColor = Panel;
-        _setupProgressContainer.Padding = new Padding(12);
+        _setupProgressContainer.Padding = new Padding(16);
         _setupProgressContainer.Margin = new Padding(0, 0, 0, 12);
         _setupProgressContainer.Controls.Add(new Label { Text = "Setup progress", AutoSize = true, ForeColor = Color.White, Font = new Font(UiFontName, 10F, FontStyle.Bold) });
         _setupProgressContainer.Controls.Add(_setupProgressStatus);
@@ -382,7 +407,7 @@ internal sealed partial class HubForm
         _resetLegacyGazeButton.Click += async (_, _) => await ResetLegacyGazeAsync();
         // Step cards size to their copy and actions, avoiding large empty bands
         // at high resolutions and clipped descriptions in narrow windows.
-        var setupCards = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 3 };
+        var setupCards = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty };
         setupCards.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (var row = 0; row < 3; row++) setupCards.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         setupCards.Controls.Add(SetupStepCard("1", "PC runtime", "Prepares Qpro's private Python and installs CPU/GPU libraries. Works whether Python is installed on this PC or not.", _setupRuntimeStatus, _setupRuntimeButton), 0, 0);
@@ -400,13 +425,13 @@ internal sealed partial class HubForm
         amdCard.Controls.Add(SectionTitle("Optional AMD ROCm acceleration"));
         amdCard.Controls.Add(Info("Install ROCm 10.0 for a mapped discrete Radeon. This Qpro path is experimental until GPU training and inference checks pass. An existing verified ROCm 7.2.1 environment remains a fallback on AMD's older supported GPU list. Install the PC runtime first."));
         amdCard.Controls.Add(_amdGpuStatus);
-        var amdSupportLink = new LinkLabel { Text = "ROCm 7.2.1 fallback GPU list", AutoSize = true, LinkColor = Accent, ActiveLinkColor = Accent, VisitedLinkColor = Accent, Margin = new Padding(5, 3, 5, 8) };
+        var amdSupportLink = new LinkLabel { Text = "ROCm 7.2.1 fallback GPU list", AutoSize = true, LinkColor = Accent, ActiveLinkColor = Accent, VisitedLinkColor = Accent, Margin = new Padding(0, 3, 0, 8) };
         amdSupportLink.LinkClicked += (_, _) =>
         {
             try { Process.Start(new ProcessStartInfo("https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2.1/docs/compatibility/compatibilityrad/windows/windows_compatibility.html") { UseShellExecute = true }); }
             catch (Exception error) { MessageBox.Show(this, error.Message, "Could not open AMD support list"); }
         };
-        var amdExperimentalLink = new LinkLabel { Text = "AMD TheRock ROCm 10.0 GPU targets", AutoSize = true, LinkColor = Accent, ActiveLinkColor = Accent, VisitedLinkColor = Accent, Margin = new Padding(5, 3, 5, 8) };
+        var amdExperimentalLink = new LinkLabel { Text = "AMD TheRock ROCm 10.0 GPU targets", AutoSize = true, LinkColor = Accent, ActiveLinkColor = Accent, VisitedLinkColor = Accent, Margin = new Padding(0, 3, 0, 8) };
         amdExperimentalLink.LinkClicked += (_, _) =>
         {
             try { Process.Start(new ProcessStartInfo("https://github.com/ROCm/TheRock/blob/main/RELEASES.md") { UseShellExecute = true }); }
@@ -419,7 +444,7 @@ internal sealed partial class HubForm
         setupLayout.Controls.Add(amdCard);
 
         var personalizationPage = NewPage();
-        var personalLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 4 };
+        var personalLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 4, Margin = Padding.Empty };
         personalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -434,17 +459,15 @@ internal sealed partial class HubForm
         _trainingProgressContainer.AutoSize = true;
         _trainingProgressContainer.ColumnCount = 1;
         _trainingProgressContainer.BackColor = Panel;
-        _trainingProgressContainer.Padding = new Padding(12);
+        _trainingProgressContainer.Padding = new Padding(16);
         _trainingProgressContainer.Margin = new Padding(0, 0, 0, 12);
         _trainingProgressContainer.Controls.Add(new Label { Text = "Training progress", AutoSize = true, ForeColor = Color.White, Font = new Font(UiFontName, 10F, FontStyle.Bold) });
         _trainingProgressContainer.Controls.Add(_trainingProgressStatus);
         _trainingProgressContainer.Controls.Add(_trainingProgress);
         personalLayout.Controls.Add(_trainingProgressContainer);
-        var choices = new TableLayoutPanel { Dock = DockStyle.Top, Height = 1200, ColumnCount = 1, RowCount = 3 };
+        var choices = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty };
         choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        choices.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        choices.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
-        choices.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
+        for (var row = 0; row < 3; row++) choices.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         choices.Controls.Add(WorkflowCard("Quick refinement · 15–30 min", "Refines the selected tongue model, then trains cheek camera outputs from 21 guided cheek cards. Inherits some parent-model bias.", _quickDatasets, _quickQueueStatus, _quickRecordedDatasets,
             ActionButton("1. Record refinement", async (_, _) => await ConfirmCaptureAsync(TongueDatasetKind.Quick)), ActionButton("2. Train personalized copy", async (_, _) => await TrainTongueAsync(TongueDatasetKind.Quick)),
             ActionButton("Delete selected dataset…", (_, _) => DeleteRecordedDataset(TongueDatasetKind.Quick))), 0, 0);
@@ -458,19 +481,31 @@ internal sealed partial class HubForm
         var cameraCheekTraining = Card(); cameraCheekTraining.Dock = DockStyle.Top;
         cameraCheekTraining.Controls.Add(SectionTitle("Experimental tongue + cheeks model"));
         cameraCheekTraining.Controls.Add(Info("Adds cheek camera outputs to a new copy of a selected tongue model. Native cheek calibration remains available. Record all guided poses and test the resulting copy before using it for a session."));
-        cameraCheekTraining.Controls.Add(new Label { Text = "Parent tongue model", AutoSize = true, ForeColor = Muted });
+        cameraCheekTraining.Controls.Add(new Label { Text = "Parent tongue model", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 4) });
+        _cheekCameraBaseModels.Margin = new Padding(0, 3, 0, 8);
         cameraCheekTraining.Controls.Add(_cheekCameraBaseModels);
-        cameraCheekTraining.Controls.Add(new Label { Text = "Completed cheek camera dataset", AutoSize = true, ForeColor = Muted });
+        cameraCheekTraining.Controls.Add(new Label { Text = "Completed cheek camera dataset", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 4) });
+        _cheekCameraDatasets.Margin = new Padding(0, 3, 0, 8);
+        _cheekCameraDatasetNote.Margin = new Padding(0, 0, 0, 8);
         cameraCheekTraining.Controls.Add(_cheekCameraDatasets);
         cameraCheekTraining.Controls.Add(_cheekCameraDatasetNote);
-        var cameraCheekActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
+        var cameraCheekActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = Padding.Empty };
         cameraCheekActions.Controls.Add(_recordCameraCheeks);
         cameraCheekActions.Controls.Add(_trainCameraCheeks);
         cameraCheekTraining.Controls.Add(cameraCheekActions);
         personalLayout.Controls.Add(cameraCheekTraining);
 
         var modelsPage = NewPage();
-        var manager = Card(); manager.Dock = DockStyle.Fill; manager.AutoSize = false; manager.MinimumSize = new Size(0, 380);
+        var manager = Card(); manager.Dock = DockStyle.Top; manager.AutoSize = false;
+        void FitModelManagerHeight()
+        {
+            var minimum = (int)Math.Ceiling(380 * DeviceDpi / 96F);
+            // Dock.Top lets AutoScroll expose the actions when the available
+            // viewport is shorter than the list's useful minimum height.
+            manager.Height = Math.Max(minimum, modelsPage.ClientSize.Height - modelsPage.Padding.Vertical);
+        }
+        modelsPage.SizeChanged += (_, _) => FitModelManagerHeight();
+        FitModelManagerHeight();
         manager.ColumnCount = 1; manager.RowCount = 4;
         manager.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         manager.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -478,11 +513,11 @@ internal sealed partial class HubForm
         manager.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         manager.Controls.Add(SectionTitle("Lower-face model manager"), 0, 0);
         manager.Controls.Add(Info("Manage tongue models and experimental tongue + camera cheeks copies. Export creates a portable .qptonguemodel package containing the paired files; import assigns a safe new version."), 0, 1);
-        var modelBody = new Panel { Dock = DockStyle.Fill, BackColor = Inset };
+        var modelBody = new Panel { Dock = DockStyle.Fill, BackColor = Inset, Margin = Padding.Empty };
         modelBody.Controls.Add(_modelList);
         modelBody.Controls.Add(_modelEmpty);
         manager.Controls.Add(modelBody, 0, 2);
-        var modelActions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
+        var modelActions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
         modelActions.Controls.Add(ActionButton("Rename", (_, _) => RenameSelectedModel()));
         modelActions.Controls.Add(ActionButton("Export", (_, _) => ExportSelectedModel()));
         modelActions.Controls.Add(ActionButton("Import", (_, _) => ImportModel()));
@@ -497,6 +532,7 @@ internal sealed partial class HubForm
         logCard.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         logCard.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         logCard.Controls.Add(SectionTitle("Activity and diagnostics"), 0, 0);
+        _log.Margin = Padding.Empty;
         logCard.Controls.Add(_log, 0, 1);
         activityPage.Controls.Add(logCard);
 
@@ -577,11 +613,12 @@ internal sealed partial class HubForm
         }
         ShowPage(_environment.HasOpenedBefore ? 1 : 0);
 
-        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, BackColor = Panel, Padding = new Padding(12, 10, 12, 10), Margin = Padding.Empty };
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, BackColor = Panel, Padding = new Padding(12, 10, 12, 10), Margin = Padding.Empty };
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30));
-        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 400));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         var footerIdentity = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty, Padding = Padding.Empty };
         footerIdentity.RowStyles.Add(new RowStyle(SizeType.Absolute, 27));
         footerIdentity.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
@@ -631,9 +668,43 @@ internal sealed partial class HubForm
         footer.Controls.Add(footerIdentity, 0, 0);
         _start.Dock = DockStyle.Fill; _stop.Dock = DockStyle.Fill;
         _start.AutoSize = false; _stop.AutoSize = false;
+        _start.Margin = new Padding(0, 0, 8, 0);
+        _stop.Margin = Padding.Empty;
         footer.Controls.Add(_start, 1, 0);
         footer.Controls.Add(_stop, 2, 0);
         shell.Controls.Add(footer, 0, 1); shell.SetColumnSpan(footer, 2);
+        bool fittingFooter = false;
+        void FitFooterColumns()
+        {
+            if (fittingFooter || shell.ClientSize.Width == 0) return;
+            fittingFooter = true;
+            try
+            {
+                var scale = DeviceDpi / 96F;
+                int Px(int logical) => Math.Max(1, (int)Math.Ceiling(logical * scale));
+                // Use shared geometry instead of a hidden page's last control
+                // bounds, so changing pages cannot shift the fixed actions.
+                var sidebarWidth = (int)shell.ColumnStyles[0].Width;
+                var left = sidebarWidth + Px(22) + lowerFace.Padding.Left
+                    + (int)lowerFace.ColumnStyles[0].Width;
+                var right = sidebarWidth + Px(22)
+                    + Math.Min(Px(1160), Math.Max(1, main.ClientSize.Width - Px(44)
+                        - SystemInformation.VerticalScrollBarWidth)) - lowerFace.Padding.Right;
+                right = Math.Min(right, footer.ClientSize.Width - footer.Padding.Right);
+                left = Math.Min(left, right - Px(240));
+                var identityWidth = Math.Max(0, left - footer.Padding.Left);
+                var actionWidth = Math.Max(Px(120), (right - left) / 2);
+                if ((int)footer.ColumnStyles[0].Width != identityWidth) footer.ColumnStyles[0].Width = identityWidth;
+                if ((int)footer.ColumnStyles[1].Width != actionWidth) footer.ColumnStyles[1].Width = actionWidth;
+                if ((int)footer.ColumnStyles[2].Width != right - left - actionWidth)
+                    footer.ColumnStyles[2].Width = right - left - actionWidth;
+            }
+            finally { fittingFooter = false; }
+        }
+        shell.SizeChanged += (_, _) => FitFooterColumns();
+        main.SizeChanged += (_, _) => FitFooterColumns();
+        _tongueModels.SizeChanged += (_, _) => FitFooterColumns();
+        lowerFace.SizeChanged += (_, _) => FitFooterColumns();
 
         void FitSidebarHeight()
         {
@@ -686,18 +757,25 @@ internal sealed partial class HubForm
                 for (var row = 1; row <= 5; row++)
                     sidebar.RowStyles[row].Height = Math.Max(Px(52), TextHeight(tabs[row - 1]) + Px(12));
                 FitSidebarHeight();
+                var fieldWidth = Math.Max(Px(160),
+                    TextRenderer.MeasureText("Eyebrow sensitivity", Font).Width + Px(24));
                 foreach (var card in liveFieldTables)
-                    card.ColumnStyles[0].Width = Math.Max(Px(160),
-                        TextRenderer.MeasureText("Eyebrow sensitivity", Font).Width + Px(24));
-                FitLiveWidth();
-                connectionPicker.ColumnStyles[0].Width = Px(155);
-                setupSource.ColumnStyles[0].Width = Px(155);
+                {
+                    var inset = card == cameraSettings || card == nativeSettings ? card.Padding.Left : 0;
+                    card.ColumnStyles[0].Width = fieldWidth - inset;
+                }
+                foreach (var page in pageList) FitPageWidth(page);
+                connectionPicker.ColumnStyles[0].Width = fieldWidth;
+                setupSource.ColumnStyles[0].Width = fieldWidth;
+                foreach (Control child in _wirelessSetup.Controls)
+                    if (child is TableLayoutPanel field && field.ColumnCount == 2)
+                        field.ColumnStyles[0].Width = fieldWidth;
                 foreach (TableLayoutPanel card in setupCards.Controls)
                 {
                     var actionCount = card.GetControlFromPosition(0, 4) is TableLayoutPanel actions ? actions.RowCount : 1;
                     card.RowStyles[4].Height = Px(54 * actionCount);
                 }
-                choices.Height = Px(1200);
+                FitModelManagerHeight();
 
                 foreach (var toggle in new[] { _gaze, _tongue, _pupil, _cameraPreview, _cameraCheekPuff,
                     _individualCheekPuff, _individualCheekSuck, _eyebrowBoost })
@@ -715,13 +793,29 @@ internal sealed partial class HubForm
                     _eyebrowSensitivity, _cheekPuffStyle, _cheekSuckStyle,
                     _visibilityMode, _connectionMode, _trackingSourceSetup, _trackingSourceLive,
                     _quickDatasets, _focusedDatasets, _fullDatasets,
-                    _quickRecordedDatasets, _focusedRecordedDatasets, _fullRecordedDatasets })
+                    _quickRecordedDatasets, _focusedRecordedDatasets, _fullRecordedDatasets,
+                    _cheekCameraBaseModels, _cheekCameraDatasets })
+                {
+                    box.MinimumSize = Size.Empty;
                     box.ItemHeight = Math.Max(Px(26), (int)Math.Ceiling(box.Font.GetHeight()) + Px(8));
+                    // ComboBox.PreferredSize ignores owner-drawn ItemHeight.
+                    // Reserve the actual height so following rows cannot overlap.
+                    box.MinimumSize = new Size(0, box.Height);
+                    if (box.Parent is TableLayoutPanel fields)
+                    {
+                        var row = fields.GetPositionFromControl(box).Row;
+                        if (row < 0) continue;
+                        while (fields.RowStyles.Count <= row) fields.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                        fields.RowStyles[row].SizeType = SizeType.Absolute;
+                        fields.RowStyles[row].Height = box.Height + box.Margin.Vertical;
+                    }
+                }
                 _modelList.ItemHeight = Math.Max(Px(40), (int)Math.Ceiling(_modelList.Font.GetHeight()) + Px(12));
                 foreach (var button in new[] { _setupRuntimeButton, _setupBridgeButton, _setupSteamLinkModuleButton, _uninstallBridgeButton,
                     _setupGazeButton, _recoverGazeButton, _inspectGazeButton, _resetLegacyGazeButton, _setupAmdButton, _enableWirelessButton, _connectWirelessButton,
                     _pairWirelessButton, _disableWirelessButton })
                     button.Height = Px(42);
+                FitCheekActions();
             }
             finally
             {
@@ -730,6 +824,7 @@ internal sealed partial class HubForm
                 shell.ResumeLayout(true);
             }
             foreach (var page in pageList) FitPageText(page);
+            FitFooterColumns();
         }
         Shown += (_, _) => ApplyDpiLayout();
         DpiChanged += (_, _) => BeginInvoke((Action)ApplyDpiLayout);

@@ -16,37 +16,38 @@ namespace QproFaceTracking.Hub;
 internal sealed partial class HubForm
 {
     private static Label StatusLabel() => new() { AutoSize = true, Font = new Font(UiFontName, 10F, FontStyle.Bold), Margin = new Padding(8, 0, 25, 8) };
-    private static Label SetupStatusLabel() => new() { Text = "○ Waiting", AutoSize = true, Font = new Font(UiFontName, 9.5F, FontStyle.Bold), ForeColor = Muted, Margin = new Padding(3, 7, 3, 8) };
+    private static Label SetupStatusLabel() => new() { Text = "○ Waiting", AutoSize = true, Font = new Font(UiFontName, 9.5F, FontStyle.Bold), ForeColor = Muted, Margin = new Padding(0, 4, 0, 8) };
     private static void SetStatus(Label label, StatusKind status, string text)
     {
         label.Text = "● " + text;
         label.ForeColor = status switch { StatusKind.Good => Good, StatusKind.Warning => Warning, _ => Bad };
     }
-    private static Label SectionTitle(string text) => new() { Text = text, AutoSize = true, Font = new Font(UiFontName, 14F, FontStyle.Bold), ForeColor = Color.White, Margin = new Padding(6, 4, 6, 10) };
-    private static Label Info(string text) => new() { Text = text, AutoSize = true, MaximumSize = new Size(395, 0), ForeColor = Muted, Margin = new Padding(6, 0, 6, 14), Tag = "responsive-info" };
-    private static TableLayoutPanel Card() => new() { AutoSize = true, Dock = DockStyle.Top, BackColor = Panel, Padding = new Padding(14), Margin = new Padding(0, 0, 0, 12) };
+    private static Label SectionTitle(string text) => new() { Text = text, AutoSize = true, Font = new Font(UiFontName, 14F, FontStyle.Bold), ForeColor = Color.White, Margin = new Padding(0, 4, 0, 12) };
+    private static Label Info(string text) => new() { Text = text, AutoSize = true, MaximumSize = new Size(395, 0), ForeColor = Muted, Margin = new Padding(0, 0, 0, 12), Tag = "responsive-info" };
+    private static Label FieldLabel(string text) => new() { Text = text, AutoSize = true, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Muted, Margin = new Padding(0, 3, 12, 3) };
+    private static TableLayoutPanel Card() => new() { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top, BackColor = Panel, Padding = new Padding(16), Margin = new Padding(0, 0, 0, 12) };
     private static DarkButton PrimaryButton(string text) => SecondaryButton(text);
     private static DarkButton SecondaryButton(string text)
     {
         var button = new DarkButton { Text = text, AutoSize = true, BackColor = Raised, ForeColor = Color.White, Padding = new Padding(12, 6, 12, 6), Margin = new Padding(0, 0, 8, 0), Enabled = false };
         return button;
     }
-    private static DarkButton ActionButton(string text, EventHandler action) { var button = SecondaryButton(text); button.Enabled = true; button.Margin = new Padding(6, 4, 6, 4); button.Click += action; return button; }
-    private static DarkButton SetupButton(string text) { var button = SecondaryButton(text); button.Enabled = true; button.AutoSize = false; button.Height = 42; button.Dock = DockStyle.Bottom; button.Margin = new Padding(3, 8, 3, 3); return button; }
+    private static DarkButton ActionButton(string text, EventHandler action) { var button = SecondaryButton(text); button.Enabled = true; button.Margin = new Padding(0, 4, 8, 4); button.Click += action; return button; }
+    private static DarkButton SetupButton(string text) { var button = SecondaryButton(text); button.Enabled = true; button.AutoSize = false; button.Height = 42; button.Dock = DockStyle.Bottom; button.Margin = new Padding(0, 8, 0, 3); return button; }
 
     private static Control SetupStepCard(string number, string title, string description, Label status, params DarkButton[] buttons)
     {
         if (buttons.Length == 0) throw new ArgumentException("A setup step needs an action", nameof(buttons));
-        var card = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, RowCount = 5, ColumnCount = 1, BackColor = Raised, Padding = new Padding(13), Margin = new Padding(5) };
+        var card = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, RowCount = 5, ColumnCount = 1, BackColor = Raised, Padding = new Padding(16), Margin = new Padding(0, 0, 0, 12) };
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         card.RowStyles.Add(new RowStyle(SizeType.Absolute, 54 * buttons.Length));
-        card.Controls.Add(new Label { Text = $"STEP {number}", AutoSize = true, ForeColor = Warning, Font = new Font(UiFontName, 8.5F, FontStyle.Bold) }, 0, 0);
-        card.Controls.Add(new Label { Text = title, AutoSize = true, ForeColor = Color.White, Font = new Font(UiFontName, 11F, FontStyle.Bold), Margin = new Padding(3, 3, 3, 4) }, 0, 1);
+        card.Controls.Add(new Label { Text = $"STEP {number}", AutoSize = true, ForeColor = Warning, Font = new Font(UiFontName, 8.5F, FontStyle.Bold), Margin = new Padding(0, 0, 0, 4) }, 0, 0);
+        card.Controls.Add(new Label { Text = title, AutoSize = true, ForeColor = Color.White, Font = new Font(UiFontName, 11F, FontStyle.Bold), Margin = new Padding(0, 3, 0, 6) }, 0, 1);
         card.Controls.Add(status, 0, 2);
-        card.Controls.Add(new Label { Text = description, AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = Muted, Margin = new Padding(3, 0, 3, 5), Tag = "responsive-info" }, 0, 3);
+        card.Controls.Add(new Label { Text = description, AutoSize = true, MaximumSize = new Size(900, 0), ForeColor = Muted, Margin = new Padding(0, 0, 0, 8), Tag = "responsive-info" }, 0, 3);
         if (buttons.Length == 1)
             card.Controls.Add(buttons[0], 0, 4);
         else
@@ -66,21 +67,28 @@ internal sealed partial class HubForm
 
     private static Control WorkflowCard(string title, string description, ComboBox queue, Label queueStatus, ComboBox recorded, Button capture, Button train, Button delete)
     {
-        var card = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, BackColor = Raised, Padding = new Padding(10), Margin = new Padding(5) };
-        card.Controls.Add(new Label { Text = title, AutoSize = true, Font = new Font(UiFontName, 10.5F, FontStyle.Bold), ForeColor = Warning });
-        card.Controls.Add(new Label { Text = description, AutoSize = false, Dock = DockStyle.Top, Height = 48, ForeColor = Muted, Margin = new Padding(3, 4, 3, 7) });
-        card.Controls.Add(new Label { Text = "Recorded datasets waiting to train", AutoSize = true, ForeColor = Color.White, Margin = new Padding(3, 5, 3, 3) });
+        var card = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 9, BackColor = Raised, Padding = new Padding(16), Margin = new Padding(0, 0, 0, 12) };
+        card.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        for (var row = 0; row < 9; row++) card.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        card.Controls.Add(new Label { Text = title, AutoSize = true, Font = new Font(UiFontName, 10.5F, FontStyle.Bold), ForeColor = Warning, Margin = new Padding(0, 0, 0, 8), Tag = "responsive-info" });
+        card.Controls.Add(new Label { Text = description, AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 0, 0, 12), Tag = "responsive-info" });
+        card.Controls.Add(new Label { Text = "Recorded datasets waiting to train", AutoSize = true, ForeColor = Color.White, Margin = new Padding(0, 4, 0, 4) });
+        queue.Margin = new Padding(0, 3, 0, 8);
         card.Controls.Add(queue);
-        queueStatus.Margin = new Padding(3, 3, 3, 8);
+        queueStatus.Margin = new Padding(0, 0, 0, 8);
         card.Controls.Add(queueStatus);
-        var actions = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 2 };
+        var actions = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 0, 0, 8) };
         actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        capture.AutoSize = false; train.AutoSize = false; capture.Height = 38; train.Height = 38; capture.Dock = DockStyle.Fill; train.Dock = DockStyle.Fill;
+        actions.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        actions.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        capture.AutoSize = false; train.AutoSize = false; capture.Height = 42; train.Height = 42; capture.Dock = DockStyle.Top; train.Dock = DockStyle.Top;
+        capture.Margin = train.Margin = new Padding(0, 0, 0, 8);
         actions.Controls.Add(capture, 0, 0); actions.Controls.Add(train, 0, 1);
         card.Controls.Add(actions);
-        card.Controls.Add(new Label { Text = "Recorded datasets (including trained)", AutoSize = true, ForeColor = Color.White, Margin = new Padding(3, 9, 3, 3) });
+        card.Controls.Add(new Label { Text = "Recorded datasets (including trained)", AutoSize = true, ForeColor = Color.White, Margin = new Padding(0, 4, 0, 4) });
+        recorded.Margin = new Padding(0, 3, 0, 8);
         card.Controls.Add(recorded);
-        delete.AutoSize = false; delete.Height = 38; delete.Dock = DockStyle.Top;
+        delete.AutoSize = false; delete.Height = 42; delete.Dock = DockStyle.Top; delete.Margin = Padding.Empty;
         card.Controls.Add(delete);
         return card;
     }
