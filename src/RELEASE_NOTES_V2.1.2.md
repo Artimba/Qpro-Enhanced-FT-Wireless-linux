@@ -28,6 +28,7 @@ Follow the PDF guide included in the ZIP, or use the [text setup instructions](h
 
 ## Lower-face and pupil updates
 
+- **Hub alignment:** Aligned field labels, dropdowns, switches and action buttons across the Hub. Training cards grow to fit their contents, Model manager actions stay reachable in smaller windows, and the rename dialog uses matching button spacing. Smoothing sliders now respond to arrow keys and show keyboard focus.
 - **Live tracking layout:** Grouped the selected model, tongue output and camera-cheek switch under **Lower-face tracking**. Session status is more compact; camera settings and native cheek/eyebrow controls expand when needed.
 - **Camera cheek selection:** The model selector stays available while tracking is stopped, and camera-cheek availability refreshes after a model change. A cheek-source message and startup Activity summary distinguish camera cheek output from the streaming app's native cheeks. Combined model selection does not enable experimental output automatically.
 - **Lower-face calibration:** Quick refinement and Full dataset append 21 cheek camera cards. Their labels come from the requested pose instead of relying on native cheek detection. Focused tongue captures and older tongue-only models remain compatible.
