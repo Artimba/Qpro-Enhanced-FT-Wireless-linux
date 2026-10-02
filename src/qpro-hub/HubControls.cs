@@ -143,10 +143,10 @@ internal sealed class TextPromptDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.Controls.Add(new Label { Text = prompt, AutoSize = true, MaximumSize = new Size(450, 0), ForeColor = Color.White, Margin = new Padding(0, 0, 0, 12) }, 0, 0);
-        _input = new TextBox { Text = initial, Dock = DockStyle.Top, BackColor = raised, ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle, MaxLength = 80 };
+        _input = new TextBox { Text = initial, Dock = DockStyle.Top, BackColor = raised, ForeColor = Color.White, BorderStyle = BorderStyle.FixedSingle, MaxLength = 80, Margin = Padding.Empty };
         layout.Controls.Add(_input, 0, 1);
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Margin = new Padding(0, 16, 0, 0) };
-        var save = new DarkButton { Text = "Save name", DialogResult = DialogResult.OK, AutoSize = true, Enabled = true, Emphasized = true, BackColor = raised, ForeColor = Color.White, Padding = new Padding(14, 7, 14, 7) };
+        var save = new DarkButton { Text = "Save name", DialogResult = DialogResult.OK, AutoSize = true, Enabled = true, Emphasized = true, BackColor = raised, ForeColor = Color.White, Padding = new Padding(14, 7, 14, 7), Margin = new Padding(8, 0, 0, 0) };
         var cancel = new DarkButton { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true, Enabled = true, BackColor = raised, ForeColor = Color.White, Padding = new Padding(14, 7, 14, 7), Margin = new Padding(8, 0, 0, 0) };
         actions.Controls.Add(save);
         actions.Controls.Add(cancel);
@@ -195,15 +195,31 @@ internal sealed class DarkSlider : Control
         e.Graphics.DrawLine(active, left, center, thumbX, center);
         using var thumb = new SolidBrush(Enabled ? Color.White : HubForm.DisabledText);
         e.Graphics.FillEllipse(thumb, thumbX - 7, center - 7, 14, 14);
+        if (Focused && ShowFocusCues && Width > 12 && Height > 12)
+            ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -3, -3),
+                HubForm.Accent, BackColor);
     }
 
+    protected override bool IsInputKey(Keys keyData) =>
+        (keyData & Keys.KeyCode) is Keys.Left or Keys.Right or Keys.Up or Keys.Down
+        || base.IsInputKey(keyData);
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
     protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); Focus(); SetFromX(e.X); }
     protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (e.Button == MouseButtons.Left) SetFromX(e.X); }
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.KeyCode is Keys.Left or Keys.Down) Value--;
-        if (e.KeyCode is Keys.Right or Keys.Up) Value++;
+        int change = e.KeyCode switch
+        {
+            Keys.Left or Keys.Down => -1,
+            Keys.Right or Keys.Up => 1,
+            _ => 0
+        };
+        if (change == 0) return;
+        Value += change;
+        e.Handled = true;
+        e.SuppressKeyPress = true;
     }
     private void SetFromX(int x)
     {
