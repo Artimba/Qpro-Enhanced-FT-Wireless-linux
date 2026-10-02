@@ -171,6 +171,46 @@ class TongueVrcftOutputTests(unittest.TestCase):
             release.set()
             worker.close()
 
+    def test_stopping_during_inference_cannot_publish_or_queue_new_work(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        class Preview:
+            target_names = list(TONGUE_TARGET_NAMES) + ["cheekPuffLeft", "cheekPuffRight"]
+
+            def predict(self, _strip, _sample, _names):
+                started.set()
+                release.wait(timeout=2)
+                return TonguePrediction(np.zeros(12), 0, 0, False, 1)
+
+        tongue = mock.Mock(enabled=True)
+        cheek = mock.Mock()
+        worker = TongueInferenceWorker(Preview(), tongue, render_preview=False,
+                                       cheek_broadcaster=cheek)
+        closer = None
+        try:
+            worker.submit(np.zeros((1, 1), np.uint8), None, [])
+            self.assertTrue(started.wait(timeout=1))
+            closer = threading.Thread(target=worker.close)
+            closer.start()
+            deadline = time.monotonic() + 1
+            while worker._running and time.monotonic() < deadline:
+                time.sleep(0.001)
+            self.assertFalse(worker._running)
+            worker.submit(np.ones((1, 1), np.uint8), None, [])
+            self.assertIsNone(worker._pending)
+            release.set()
+            closer.join(timeout=1)
+            self.assertFalse(closer.is_alive())
+            tongue.send_prediction.assert_not_called()
+            cheek.send_prediction.assert_not_called()
+            self.assertEqual(worker.latest(), (None, None))
+        finally:
+            release.set()
+            worker.close()
+            if closer is not None:
+                closer.join(timeout=1)
+
 
 if __name__ == "__main__":
     unittest.main()

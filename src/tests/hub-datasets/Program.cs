@@ -5,8 +5,10 @@ var expected = new (string SessionType, TongueDatasetKind Kind)[]
 {
     ("tongue-stereo-corrections-v1", TongueDatasetKind.Quick),
     ("tongue-stereo-refinement-v2", TongueDatasetKind.Quick),
+    ("lower-face-refinement-v1", TongueDatasetKind.Quick),
     ("tongue-stereo-arc-v3", TongueDatasetKind.Focused),
     ("tongue-stereo-stills-v1", TongueDatasetKind.Full),
+    ("lower-face-stills-v1", TongueDatasetKind.Full),
 };
 
 foreach (var (sessionType, expectedKind) in expected)

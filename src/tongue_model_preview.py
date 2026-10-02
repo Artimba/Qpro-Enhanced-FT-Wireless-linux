@@ -221,7 +221,8 @@ class LiveTongueModelPreview:
                 self.direction_checkpoint_path, map_location="cpu", weights_only=False
             )
             direction_names = list(direction_checkpoint["targetNames"])
-            if direction_names != self.target_names:
+            cheek_names = ["cheekPuffLeft", "cheekPuffRight"]
+            if direction_names != self.target_names and direction_names != self.target_names + cheek_names:
                 raise ValueError(
                     "Visibility and direction checkpoints use different target schemas"
                 )
@@ -233,10 +234,11 @@ class LiveTongueModelPreview:
                 direction_checkpoint
             )
             self.direction_model = create_model(
-                direction_architecture, self.target_names
+                direction_architecture, direction_names
             )
             self.direction_model.load_state_dict(direction_checkpoint["modelState"])
             self.direction_model.to(self.device).eval()
+            self.target_names = direction_names
         gate = checkpoint.get("visibilityGate", {})
         self.camera_weight = float(
             gate.get("cameraWeight", 0.5) if camera_weight is None else camera_weight
@@ -324,6 +326,12 @@ class LiveTongueModelPreview:
         visible, fused, output_values = self._visibility_hold.update(
             fused, self.threshold, self._smoothed, time.perf_counter()
         )
+        output_values = output_values.copy()
+        # A tongue visibility hold must not freeze an unrelated cheek pose.
+        for name in ("cheekPuffLeft", "cheekPuffRight"):
+            if name in self.target_names:
+                index = self.target_names.index(name)
+                output_values[index] = self._smoothed[index]
         return TonguePrediction(
             values=output_values.copy(),
             native_tongue_out=native,
@@ -335,13 +343,14 @@ class LiveTongueModelPreview:
     def render(
         self, prediction: TonguePrediction, *, output_enabled: bool = False
     ) -> np.ndarray:
-        image = np.zeros((760, 1100, 3), dtype=np.uint8)
-        cv2.putText(image, "Quest Pro personalized stereo tongue preview", (24, 42),
+        height = max(760, 205 + len(self.target_names) * 46 + 60)
+        image = np.zeros((height, 1100, 3), dtype=np.uint8)
+        cv2.putText(image, "Quest Pro personalized lower-face preview", (24, 42),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.86, (240, 240, 240), 2, cv2.LINE_AA)
         output_text = (
             "EXPERIMENTAL VRCFT TONGUE OUTPUT ON - T disables immediately"
             if output_enabled
-            else "SAFE MODE - stock Virtual Desktop tongue active; T enables experiment"
+            else "Stock tongue output active; T enables the tongue override"
         )
         cv2.putText(
             image, output_text, (24, 76), cv2.FONT_HERSHEY_SIMPLEX, 0.55,
@@ -389,7 +398,7 @@ class LiveTongueModelPreview:
         cv2.putText(
             image,
             "T toggles VRCFT output | Q quits and restores stock tongue automatically.",
-            (24, 730), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (170, 170, 170), 1, cv2.LINE_AA,
+            (24, height - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (170, 170, 170), 1, cv2.LINE_AA,
         )
         return image
 
@@ -402,10 +411,12 @@ class TongueInferenceWorker:
         preview: LiveTongueModelPreview,
         broadcaster: TongueBroadcaster,
         render_preview: bool = True,
+        cheek_broadcaster=None,
     ) -> None:
         self.preview = preview
         self.broadcaster = broadcaster
         self.render_preview = render_preview
+        self.cheek_broadcaster = cheek_broadcaster
         self._condition = threading.Condition()
         self._pending: tuple[
             np.ndarray, dict[str, object] | None, list[str], float
@@ -426,6 +437,8 @@ class TongueInferenceWorker:
         factory_names: list[str],
     ) -> None:
         with self._condition:
+            if not self._running:
+                return
             if self._pending is not None:
                 self._dropped_frames += 1
             # The ndarray keeps its immutable payload bytes alive. Replacing
@@ -446,6 +459,7 @@ class TongueInferenceWorker:
     def close(self) -> None:
         with self._condition:
             self._running = False
+            self._pending = None
             self._condition.notify_all()
         # Startup-path tests intentionally replace Thread.start; a receiver
         # failure before connection must still clean up without joining a
@@ -472,9 +486,17 @@ class TongueInferenceWorker:
                     pipeline_ms=(time.perf_counter() - submitted_at) * 1000.0,
                     dropped_frames=dropped,
                 )
-                self.broadcaster.send_prediction(
-                    prediction, self.preview.target_names
-                )
+                # Stop may arrive while a GPU call is still running. Serialize
+                # publication with close so that call cannot renew an override
+                # after the receiver has requested shutdown.
+                with self._condition:
+                    if not self._running:
+                        return
+                    self.broadcaster.send_prediction(
+                        prediction, self.preview.target_names
+                    )
+                    if self.cheek_broadcaster is not None:
+                        self.cheek_broadcaster.send_prediction(prediction, self.preview.target_names)
                 image = (
                     self.preview.render(
                         prediction, output_enabled=self.broadcaster.enabled
@@ -482,6 +504,8 @@ class TongueInferenceWorker:
                     if self.render_preview else None
                 )
                 with self._condition:
+                    if not self._running:
+                        return
                     self._latest = (prediction, image)
         except BaseException as error:
             with self._condition:

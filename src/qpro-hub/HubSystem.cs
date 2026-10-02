@@ -148,10 +148,11 @@ internal sealed partial class HubForm
         var sessionEditable = !running && !_stopping && !_starting;
         _gaze.Enabled = sessionEditable;
         _tongue.Enabled = sessionEditable;
+        _cameraCheekPuff.Enabled = sessionEditable;
         _pupil.Enabled = sessionEditable;
         _eyeProfiles.Enabled = _gaze.Checked && sessionEditable;
-        _tongueModels.Enabled = _tongue.Checked && sessionEditable;
-        _fps.Enabled = (_tongue.Checked || _pupil.Checked) && sessionEditable;
+        _tongueModels.Enabled = (_tongue.Checked || _cameraCheekPuff.Checked) && sessionEditable;
+        _fps.Enabled = (_tongue.Checked || _cameraCheekPuff.Checked || _pupil.Checked) && sessionEditable;
         _pupilSensitivity.Enabled = _pupil.Checked && sessionEditable;
         _cameraPreview.Enabled = sessionEditable;
         _connectionMode.Enabled = !_setupActionRunning && !_utilityActionRunning &&
@@ -168,6 +169,11 @@ internal sealed partial class HubForm
         _resetLegacyGazeButton.Enabled = _recoverGazeButton.Enabled;
         var canStart = !running && !_stopping && !_starting && !_setupActionRunning &&
             !_utilityActionRunning && !_datasetOperationBusy;
+        _cheekCameraBaseModels.Enabled = canStart;
+        _cheekCameraDatasets.Enabled = canStart;
+        _recordCameraCheeks.Enabled = canStart;
+        _trainCameraCheeks.Enabled = canStart && _cheekCameraBaseModels.SelectedItem is FileChoice &&
+            _cheekCameraDatasets.SelectedItem is DatasetChoice;
         _start.Enabled = canStart;
         _stop.Enabled = (running || _starting) && !_stopping;
         StyleRunButton(_start, canStart);

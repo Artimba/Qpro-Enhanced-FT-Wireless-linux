@@ -25,11 +25,13 @@ param(
     [switch]$TongueCorrectionCalibration,
     [switch]$TongueRefinementCalibration,
     [switch]$TongueArcCalibration,
+    [switch]$CheekStillCalibration,
     [switch]$ModelPreview,
     [string]$ModelPath = ".\models\qpro-five-camera-pilot.pt",
     [string]$ModelDevice = "auto",
     [switch]$TonguePreview,
     [switch]$EnableTongueOutput,
+    [switch]$EnableCheekOutput,
     [switch]$PupilOutput,
     [ValidateRange(1.0, 3.0)]
     [double]$PupilSensitivity = 1.4,
@@ -202,7 +204,7 @@ try {
     }
 
     if ($TongueCalibration) { $CameraMode = "face" }
-    if ($TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration) {
+    if ($TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or $CheekStillCalibration) {
         # Guided stills train on cameras 2 and 3 only. The third face panel
         # adds 50% more wireless data without contributing to tongue targets.
         $CameraMode = "mouth"
@@ -219,7 +221,7 @@ try {
         throw "Pupil output needs both eye cameras. Use -CameraMode eyes or all."
     }
 
-    $recordEnabled = $Record -or $Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or -not [string]::IsNullOrWhiteSpace($RecordPath)
+    $recordEnabled = $Record -or $Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or $CheekStillCalibration -or -not [string]::IsNullOrWhiteSpace($RecordPath)
     $labelsEnabled = ($recordEnabled -or $ModelPreview -or $TonguePreview -or $EyeCalibration -or $HybridPreview) -and -not $NoLabels
     $vrcftRequired = $Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or $ModelPreview -or $TonguePreview -or $PupilOutput -or $EyeCalibration -or $HybridPreview
     if ($TrackingSource -eq "SteamLink" -and $labelsEnabled) {
@@ -288,6 +290,13 @@ try {
     if ($TongueArcCalibration -and ($Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $ModelPreview -or $TonguePreview -or $OpenSourcePreview -or $HybridPreview -or $EyeCalibration)) {
         throw "Run TongueArcCalibration by itself."
     }
+    if ($CheekStillCalibration -and ($NoWindow -or $RecordSeconds -gt 0)) {
+        throw "CheekStillCalibration requires the visible prompt window and controls its own capture."
+    }
+    if ($CheekStillCalibration -and ($Calibration -or $TongueCalibration -or $TongueStillCalibration -or $TongueCorrectionCalibration -or $TongueRefinementCalibration -or $TongueArcCalibration -or $TonguePreview -or $ModelPreview -or $PupilOutput -or $OpenSourcePreview -or $HybridPreview -or $EyeCalibration)) {
+        throw "Run CheekStillCalibration by itself."
+    }
+    if ($EnableCheekOutput -and -not $TonguePreview) { throw "EnableCheekOutput requires the selected tongue-and-cheek camera model." }
     if ($ModelPreview -and $CameraMode -ne "all") { throw "ModelPreview requires -CameraMode all (the default)." }
     if ($ModelPreview -and $NoWindow) { throw "ModelPreview requires visible comparison windows." }
     if ($ModelPreview -and $NoLabels) { throw "ModelPreview requires factory labels from the selected tracking source." }
@@ -325,7 +334,7 @@ try {
     $rocmPython = $null
     Remove-Item Env:QPRO_ROCM_INSTALL_SMOKE_TEST -ErrorAction SilentlyContinue
     Remove-Item Env:QPRO_ROCM_EXPECTED_GFX_TARGET -ErrorAction SilentlyContinue
-    if ($TonguePreview) {
+    if ($TonguePreview -or $PupilOutput) {
         $rocmCandidates = @(Get-QproRocmCandidates $PSScriptRoot)
         foreach ($candidate in $rocmCandidates) {
             if (-not (Test-Path -LiteralPath $candidate.Python -PathType Leaf) -or
@@ -341,7 +350,7 @@ try {
             $probeSucceeded = $false
             try {
                 $global:LASTEXITCODE = $null
-                & $candidate.Python -c "import torch; from qpro_gpu import require_rocm_device_name; d=require_rocm_device_name(torch); print('Tongue model GPU:', torch.cuda.get_device_name(int(d.split(':')[1])), 'on', d)"
+                & $candidate.Python -c "import torch; from qpro_gpu import require_rocm_device_name; d=require_rocm_device_name(torch); print('Tracking GPU:', torch.cuda.get_device_name(int(d.split(':')[1])), 'on', d)"
                 $probeSucceeded = $LASTEXITCODE -eq 0
             } catch { Write-Warning "$($candidate.Name) validation failed: $_" }
             if ($probeSucceeded) {
@@ -523,6 +532,7 @@ try {
         if ($TongueCorrectionCalibration) { $receiverArguments += "--tongue-correction-calibration" }
         if ($TongueRefinementCalibration) { $receiverArguments += "--tongue-refinement-calibration" }
         if ($TongueArcCalibration) { $receiverArguments += "--tongue-arc-calibration" }
+        if ($CheekStillCalibration) { $receiverArguments += "--cheek-still-calibration" }
     }
     if ($ModelPreview) {
         $resolvedModelPath = (Resolve-Path -LiteralPath $ModelPath).Path
@@ -542,6 +552,7 @@ try {
             $receiverArguments += @("--tongue-direction-model", $resolvedTongueDirectionModelPath)
         }
         if ($EnableTongueOutput) { $receiverArguments += "--tongue-output" }
+        if ($EnableCheekOutput) { $receiverArguments += "--cheek-output" }
     }
     if ($PupilOutput) {
         $receiverArguments += @("--pupil-output", "--pupil-sensitivity", $PupilSensitivity.ToString('0.0', [System.Globalization.CultureInfo]::InvariantCulture))

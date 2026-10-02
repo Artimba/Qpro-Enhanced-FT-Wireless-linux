@@ -1,12 +1,22 @@
 import sys
+import io
+import json
+import tempfile
 import unittest
 from collections import deque
+from contextlib import redirect_stdout
+from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
 
 import receiver
 import tongue_model_preview
 import torch
+from cheek_still_capture import CHEEK_STILL_PROMPTS, LOWER_FACE_REFINEMENT_PROMPTS, LOWER_FACE_STILL_PROMPTS
+from tongue_still_capture import (
+    TONGUE_ARC_PROMPTS, TONGUE_CORRECTION_PROMPTS, TONGUE_REFINEMENT_PROMPTS,
+    TONGUE_STILL_PROMPTS, TongueStillCaptureSession,
+)
 
 
 class _FakeServer:
@@ -35,6 +45,66 @@ class _FakeTonguePreview:
 
 
 class ReceiverTongueStartupTests(unittest.TestCase):
+    def capture_startup_journal(self, flag):
+        # No frame is received. Startup creates and finalizes only an empty
+        # temporary capture and its journal, with all UI and sockets replaced.
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory) / "capture.qpcap"
+            arguments = ["receiver.py", "--record", str(capture), "--no-labels", flag]
+            original_save = TongueStillCaptureSession._save
+            with (
+                redirect_stdout(io.StringIO()),
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(receiver, "start_mjpeg_server", return_value=_FakeServer()),
+                mock.patch.object(receiver.threading.Thread, "start", return_value=None),
+                mock.patch.object(receiver.cv2, "setNumThreads"),
+                mock.patch.object(receiver.cv2, "namedWindow"),
+                mock.patch.object(receiver.cv2, "resizeWindow"),
+                mock.patch.object(receiver.cv2, "setWindowProperty"),
+                mock.patch.object(receiver.cv2, "setMouseCallback"),
+                mock.patch.object(receiver.cv2, "destroyAllWindows"),
+                mock.patch.object(receiver.socket, "create_connection", side_effect=KeyboardInterrupt) as connect,
+                mock.patch.object(TongueStillCaptureSession, "_save", autospec=True,
+                                  side_effect=original_save) as save,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    receiver.main()
+            connect.assert_called_once()
+            # A selected constructor writes once, then finish records the
+            # interrupted session. No transient legacy journal is created.
+            self.assertEqual(save.call_count, 2)
+            journal = json.loads(capture.with_suffix(".qpsession.json").read_text(encoding="utf-8"))
+            self.assertFalse(journal["completed"])
+            self.assertEqual(journal["samples"], [])
+            return journal
+
+    def test_quick_and_full_capture_route_to_combined_lower_face_curricula(self):
+        cases = (
+            ("--tongue-refinement-calibration", "lower-face-refinement-v1",
+             TONGUE_REFINEMENT_PROMPTS, LOWER_FACE_REFINEMENT_PROMPTS),
+            ("--tongue-still-calibration", "lower-face-stills-v1",
+             TONGUE_STILL_PROMPTS, LOWER_FACE_STILL_PROMPTS),
+        )
+        for flag, session_type, prefix, expected in cases:
+            with self.subTest(flag=flag):
+                journal = self.capture_startup_journal(flag)
+                self.assertEqual(journal["sessionType"], session_type)
+                self.assertEqual(journal["prompts"], [asdict(card) for card in expected])
+                self.assertEqual(journal["prompts"][:len(prefix)], [asdict(card) for card in prefix])
+                self.assertEqual(journal["prompts"][len(prefix):], [asdict(card) for card in CHEEK_STILL_PROMPTS])
+
+    def test_correction_arc_and_standalone_cheek_keep_their_existing_curricula(self):
+        cases = (
+            ("--tongue-correction-calibration", "tongue-stereo-corrections-v1", TONGUE_CORRECTION_PROMPTS),
+            ("--tongue-arc-calibration", "tongue-stereo-arc-v3", TONGUE_ARC_PROMPTS),
+            ("--cheek-still-calibration", "cheek-stereo-stills-v1", CHEEK_STILL_PROMPTS),
+        )
+        for flag, session_type, prompts in cases:
+            with self.subTest(flag=flag):
+                journal = self.capture_startup_journal(flag)
+                self.assertEqual(journal["sessionType"], session_type)
+                self.assertEqual(journal["prompts"], [asdict(card) for card in prompts])
+
     def test_stream_gap_stats_separates_headset_and_pc_receive_pauses(self):
         stats = receiver.StreamGapStats(
             source_ms=deque(maxlen=240), arrival_ms=deque(maxlen=240)

@@ -255,40 +255,32 @@ internal sealed partial class HubForm
         return HasMoustacheModelIcon(metadata) ? "Mustachio" : version == 8 ? "Developer-trained tongue model" : "Personal tongue model";
     }
 
-    private static bool HasMoustacheModelIcon(JsonObject? metadata) =>
-        metadata?["modelKind"] is JsonValue value && value.TryGetValue<string>(out var kind) &&
-        string.Equals(kind, "mustachio-experimental", StringComparison.Ordinal);
+    private static bool HasMoustacheModelIcon(JsonObject? metadata) => HubModelMetadata.IsMustachio(metadata);
 
-    private static bool IsExperimentalModelMetadata(JsonObject? metadata) =>
-        HasMoustacheModelIcon(metadata) ||
-        (metadata?["isExperimental"] is JsonValue value && value.TryGetValue<bool>(out var experimental) && experimental);
+    private static bool IsExperimentalModelMetadata(JsonObject? metadata) => HubModelMetadata.IsExperimental(metadata);
 
     private bool IsExperimentalTongueModel(int version) => IsExperimentalModelMetadata(ReadModelMetadata(version));
 
     private static void CopyModelClassification(JsonObject? source, JsonObject destination)
     {
-        if (source?["modelKind"] is JsonValue value && value.TryGetValue<string>(out var kind) &&
-            !string.IsNullOrWhiteSpace(kind))
-            destination["modelKind"] = kind;
-        if (IsExperimentalModelMetadata(source)) destination["isExperimental"] = true;
+        HubModelMetadata.CopyPortableDetails(source, destination);
     }
 
     private void WriteModelMetadata(int version, string displayName, string? datasetPath, string origin, JsonObject? classification = null)
     {
         var existing = ReadModelMetadata(version);
-        var payload = new JsonObject
-        {
-            ["format"] = "qpro-tongue-model-metadata-v1",
-            ["displayName"] = CleanDisplayName(displayName),
-            ["version"] = version,
-            ["origin"] = origin,
-            ["datasetSession"] = datasetPath is null ? existing?["datasetSession"]?.DeepClone() : Path.GetFileName(datasetPath),
-            ["createdUtc"] = existing?["createdUtc"]?.DeepClone() ?? JsonValue.Create(DateTimeOffset.UtcNow.ToString("O"))
-        };
+        var payload = HubModelMetadata.Create(version, CleanDisplayName(displayName),
+            datasetPath is null ? null : Path.GetFileName(datasetPath), origin, existing, classification);
         // Experimental status belongs to the model, so changing its friendly
         // name or transferring it cannot silently remove its warning.
-        CopyModelClassification(classification ?? existing, payload);
-        File.WriteAllText(ModelMetadataPath(version), payload.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        var destination = ModelMetadataPath(version);
+        var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, payload.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(temporary, destination, true);
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
     private void RenameSelectedModel()
@@ -298,7 +290,10 @@ internal sealed partial class HubForm
         var current = ModelFriendlyName(version, ReadModelMetadata(version));
         var name = PromptForText("Rename tongue model", "Choose the friendly name shown in the hub. The model files remain paired and unchanged.", current);
         if (name is null) return;
-        WriteModelMetadata(version, name, null, version == 8 ? "bundled developer model" : "renamed local model");
+        var existing = ReadModelMetadata(version);
+        var origin = existing?["origin"] is JsonValue originValue && originValue.TryGetValue<string>(out var previousOrigin)
+            ? previousOrigin : version == 8 ? "bundled developer model" : "renamed local model";
+        WriteModelMetadata(version, name, null, origin);
         AppendLog($"Renamed tongue model v{version} to “{name}”.");
         ReloadProfiles();
     }
@@ -356,37 +351,21 @@ internal sealed partial class HubForm
         using var dialog = new OpenFileDialog { Title = "Import tongue model", Filter = "Qpro tongue model (*.qptonguemodel)|*.qptonguemodel", CheckFileExists = true };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         if (MessageBox.Show(this, "Only import model files from someone you trust. PyTorch model files are executable data when loaded.\n\nContinue?", "Trust this model?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-        var version = TongueModelVersions().DefaultIfEmpty(0).Max() + 1;
         var models = Path.Combine(_root, "models");
         Directory.CreateDirectory(models);
-        var gatePath = Path.Combine(models, $"qpro-stereo-tongue-v{version}-gate.pt");
-        var directionPath = Path.Combine(models, $"qpro-stereo-tongue-v{version}-direction.pt");
         try
         {
-            using var archive = ZipFile.OpenRead(dialog.FileName);
-            var gate = archive.GetEntry("gate.pt");
-            var direction = archive.GetEntry("direction.pt");
-            if (gate is null || direction is null || gate.Length <= 0 || direction.Length <= 0 || gate.Length > 268_435_456 || direction.Length > 268_435_456)
-                throw new InvalidDataException("This package does not contain a valid, reasonably sized paired model.");
-            var manifestEntry = archive.GetEntry("manifest.json");
-            if (manifestEntry is null) throw new InvalidDataException("This is not a Qpro tongue-model package (manifest.json is missing).");
-            using var reader = new StreamReader(manifestEntry.Open(), Encoding.UTF8);
-            var manifest = JsonNode.Parse(reader.ReadToEnd())?.AsObject()
-                ?? throw new InvalidDataException("The model package manifest is invalid.");
-            if (!string.Equals(manifest["format"]?.GetValue<string>(), "qpro-tongue-model-package-v1", StringComparison.Ordinal))
-                throw new InvalidDataException("This model package format is not supported.");
+            var version = HubModelPackage.NextVersion(models);
+            var manifest = HubModelPackage.Import(dialog.FileName, models, version, packageManifest =>
+                HubModelMetadata.Create(version,
+                    CleanDisplayName(packageManifest["displayName"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(dialog.FileName)),
+                    null, "imported package", null, packageManifest));
             var displayName = manifest["displayName"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(dialog.FileName);
-            gate.ExtractToFile(gatePath, false);
-            direction.ExtractToFile(directionPath, false);
-            WriteModelMetadata(version, displayName, null, "imported package", manifest);
             AppendLog($"Imported “{CleanDisplayName(displayName)}” as local model v{version}.");
             ReloadProfiles();
         }
         catch (Exception error)
         {
-            if (File.Exists(gatePath)) File.Delete(gatePath);
-            if (File.Exists(directionPath)) File.Delete(directionPath);
-            if (File.Exists(ModelMetadataPath(version))) File.Delete(ModelMetadataPath(version));
             MessageBox.Show(this, error.Message, "Model import failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }

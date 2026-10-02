@@ -25,6 +25,12 @@ internal sealed partial class HubForm : Form
     private readonly CheckBox _pupil = FeatureToggle("Experimental relative pupil dilation (eye cameras)", false);
     private readonly CheckBox _cameraPreview = FeatureToggle("Preview tracking cameras", true);
     private readonly CheckBox _individualCheekPuff = FeatureToggle("Individual cheek puff", true);
+    private readonly CheckBox _cameraCheekPuff = FeatureToggle("Camera cheek puff (experimental)", false);
+    private readonly ComboBox _cheekCameraDatasets = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+    private readonly ComboBox _cheekCameraBaseModels = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
+    private readonly Label _cheekCameraDatasetNote = new() { AutoSize = true, ForeColor = Muted, Tag = "responsive-info" };
+    private readonly DarkButton _recordCameraCheeks = SecondaryButton("1. Record cheek camera poses");
+    private readonly DarkButton _trainCameraCheeks = SecondaryButton("2. Train tongue + cheeks copy");
     private readonly CheckBox _individualCheekSuck = FeatureToggle("Individual cheek suck", true);
     private readonly CheckBox _eyebrowBoost = FeatureToggle("Adjust eyebrow movement", false);
     private readonly ComboBox _trackingSourceSetup = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
@@ -64,6 +70,7 @@ internal sealed partial class HubForm : Form
     private readonly Label _gazeStatus = StatusLabel();
     private readonly Label _inferenceStatus = StatusLabel();
     private readonly Label _pupilStatus = StatusLabel();
+    private string _pupilBackendLabel = "Starting";
     private readonly Label _setupRuntimeStatus = SetupStatusLabel();
     private readonly Label _setupBridgeStatus = SetupStatusLabel();
     private readonly Label _setupGazeStatus = SetupStatusLabel();
@@ -164,6 +171,7 @@ internal sealed partial class HubForm : Form
             UpdateControlState();
         };
         _tongue.CheckedChanged += (_, _) => UpdateControlState();
+        _cameraCheekPuff.CheckedChanged += (_, _) => { UpdateToggleStyle(_cameraCheekPuff); UpdateControlState(); };
         _pupil.CheckedChanged += (_, _) => UpdateControlState();
         _cameraPreview.CheckedChanged += (_, _) =>
         {
@@ -172,6 +180,10 @@ internal sealed partial class HubForm : Form
             UpdateToggleStyle(_cameraPreview);
         };
         _tongueModels.SelectedIndexChanged += (_, _) => UpdateTongueModelNote();
+        _recordCameraCheeks.Click += async (_, _) => await RecordCameraCheeksAsync();
+        _trainCameraCheeks.Click += async (_, _) => await TrainCameraCheeksAsync();
+        _cheekCameraDatasets.SelectedIndexChanged += (_, _) => UpdateControlState();
+        _cheekCameraBaseModels.SelectedIndexChanged += (_, _) => UpdateControlState();
         _fps.Items.AddRange(["12", "15", "18", "20", "24", "30", "36", "48", "60", "72"]);
         _fps.SelectedItem = "24";
         _pupilSensitivity.Items.AddRange(Enumerable.Range(0, 11)
@@ -280,12 +292,15 @@ internal sealed partial class HubForm : Form
         ConfigureDropDown(_quickRecordedDatasets);
         ConfigureDropDown(_focusedRecordedDatasets);
         ConfigureDropDown(_fullRecordedDatasets);
+        ConfigureDropDown(_cheekCameraBaseModels);
+        ConfigureDropDown(_cheekCameraDatasets);
         ConfigureModelList(_modelList);
         UpdateToggleStyle(_gaze);
         UpdateToggleStyle(_tongue);
         UpdateToggleStyle(_pupil);
         UpdateToggleStyle(_cameraPreview);
         UpdateToggleStyle(_individualCheekPuff);
+        UpdateToggleStyle(_cameraCheekPuff);
         UpdateToggleStyle(_individualCheekSuck);
         UpdateToggleStyle(_eyebrowBoost);
         SetStatus(_inferenceStatus, StatusKind.Warning, "Idle");

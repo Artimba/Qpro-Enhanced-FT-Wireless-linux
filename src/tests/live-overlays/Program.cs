@@ -24,6 +24,35 @@ catch (Exception error)
 
 void RunChecks()
 {
+    foreach (bool missingMap in new[] { false, true })
+    {
+        using var f = new Fixture();
+        f.Native(faceFlags: 1, eyeFollowing: true, eyesValid: true);
+        f.SendCameraCheeks(.75f, .1f);
+        f.Module.Update();
+        Near(Tongue(UnifiedExpressions.CheekPuffLeft), .75f, "fresh camera left cheek reaches production output");
+        Near(Tongue(UnifiedExpressions.CheekPuffRight), .1f, "fresh camera right cheek stays independent");
+        Near(Tongue(UnifiedExpressions.TongueOut), .85f, "camera cheeks do not replace native tongue");
+        if (missingMap) f.LoseMap();
+        else f.Native(faceFlags: 0, eyeFollowing: true, eyesValid: false);
+        f.Module.Update();
+        Near(Tongue(UnifiedExpressions.CheekPuffLeft), .75f, "fresh camera cheeks survive an unavailable native face source");
+        f.Time += 501;
+        f.Module.Update();
+        Near(Tongue(UnifiedExpressions.CheekPuffLeft), 0f, "expired camera cheeks clear without a native source");
+        Near(Tongue(UnifiedExpressions.CheekPuffRight), 0f, "expired camera cheeks clear both sides");
+        UnifiedTracking.Data.Shapes[(int)UnifiedExpressions.CheekPuffLeft].Weight = .37f;
+        f.Module.Update();
+        Near(Tongue(UnifiedExpressions.CheekPuffLeft), .37f, "released camera cheek slots are not repeatedly overwritten");
+        f.Native(faceFlags: 1, eyeFollowing: true, eyesValid: true);
+        f.SendCameraCheeks(.9f, .2f);
+        f.Module.Update();
+        f.SendCameraCheeks(0, 0, enabled: false);
+        f.Module.Update();
+        Near(Tongue(UnifiedExpressions.CheekPuffLeft), 0f, "camera stop restores native cheek style immediately");
+        Near(Tongue(UnifiedExpressions.CheekPuffRight), 0f, "camera stop restores the other native cheek");
+    }
+
     // Named test maps and ephemeral loopback ports keep these checks separate
     // from an installed module, Virtual Desktop, or a connected headset.
     using (var f = new Fixture())
@@ -209,6 +238,7 @@ sealed class Fixture : IDisposable
     private readonly UdpClient _gaze = Socket();
     private readonly UdpClient _tongue = Socket();
     private readonly UdpClient _pupil = Socket();
+    private readonly UdpClient _cameraCheeks = Socket();
     private MemoryMappedFile? _map;
     private MemoryMappedViewAccessor? _view;
     internal long Time = 1000;
@@ -227,6 +257,7 @@ sealed class Fixture : IDisposable
                     property.SetValue(Module, NullLogger.Instance);
         }
         Set("_gazeSocket", _gaze); Set("_tongueSocket", _tongue); Set("_pupilSocket", _pupil);
+        Set("_cheekCameraSocket", _cameraCheeks);
         Set("_wasActive", true);
         SetSlotOwnership(eyes: true, mouth: true);
         Module.Status = ModuleState.Active;
@@ -296,6 +327,13 @@ sealed class Fixture : IDisposable
         byte[] packet = Packet("QPDI", 16, enabled ? (byte)3 : (byte)0);
         WriteFloat(packet, 8, 6.2f); WriteFloat(packet, 12, 6.4f);
         Send(_pupil, packet);
+    }
+
+    internal void SendCameraCheeks(float left, float right, bool enabled = true)
+    {
+        byte[] packet = Packet("QPCO", 16, enabled ? (byte)1 : (byte)0);
+        WriteFloat(packet, 8, left); WriteFloat(packet, 12, right);
+        Send(_cameraCheeks, packet);
     }
 
     internal void SendMalformedThenValid()

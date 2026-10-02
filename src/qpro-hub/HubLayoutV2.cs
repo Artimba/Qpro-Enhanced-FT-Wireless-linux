@@ -102,8 +102,9 @@ internal sealed partial class HubForm
         }
 
         var livePage = NewPage();
-        var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 4, Padding = Padding.Empty, Margin = Padding.Empty };
+        var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 5, Padding = Padding.Empty, Margin = Padding.Empty };
         liveLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -120,7 +121,7 @@ internal sealed partial class HubForm
         {
             ("Quest ADB", _usbStatus), ("SteamVR", _steamStatus), ("VRCFaceTracking", _vrcftStatus),
             ("Qpro module", _bridgeStatus), ("PC runtime", _runtimeStatus), ("Gaze support", _gazeStatus),
-            ("Tongue inference", _inferenceStatus), ("Pupil processing", _pupilStatus),
+            ("Lower-face inference", _inferenceStatus), ("Pupil processing", _pupilStatus),
         };
         for (var index = 0; index < statusItems.Length; index++)
         {
@@ -158,7 +159,7 @@ internal sealed partial class HubForm
         tracking.Controls.Add(new Label { Text = "Eye profile", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 3);
         tracking.Controls.Add(_eyeProfiles, 1, 3);
         tracking.Controls.Add(_tongue, 0, 4); tracking.SetColumnSpan(_tongue, 2);
-        tracking.Controls.Add(new Label { Text = "Tongue model", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 5);
+        tracking.Controls.Add(new Label { Text = "Lower-face model", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 5);
         tracking.Controls.Add(_tongueModels, 1, 5);
         tracking.Controls.Add(new Label { Text = "FPS cap", AutoSize = true, ForeColor = Muted, Margin = new Padding(24, 9, 10, 4) }, 0, 6);
         tracking.Controls.Add(_fps, 1, 6);
@@ -196,6 +197,10 @@ internal sealed partial class HubForm
         tracking.Controls.Add(Info("Turn this off to hide the live camera windows. Tongue and pupil tracking will continue. Changes take effect the next time you start tracking."), 0, 22);
         tracking.SetColumnSpan(tracking.GetControlFromPosition(0, 22)!, 2);
         liveLayout.Controls.Add(tracking);
+        var cameraCheeks = Card(); cameraCheeks.Dock = DockStyle.Top;
+        cameraCheeks.Controls.Add(_cameraCheekPuff);
+        cameraCheeks.Controls.Add(Info("Uses a trained tongue + cheeks copy selected under Lower-face model. Quick refinement and Full dataset include cheek camera poses. This is a separate experimental option; turn it off to use your selected native cheek puff style. Restart Qpro tracking after changing it."));
+        liveLayout.Controls.Add(cameraCheeks);
         var refresh = ActionButton("Refresh connection status", (_, _) => { ReloadProfiles(); _ = RefreshStatusAsync(); });
         refresh.Dock = DockStyle.Top;
         liveLayout.Controls.Add(refresh);
@@ -324,15 +329,16 @@ internal sealed partial class HubForm
         setupLayout.Controls.Add(amdCard);
 
         var personalizationPage = NewPage();
-        var personalLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 3 };
+        var personalLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 4 };
         personalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         personalizationPage.Controls.Add(personalLayout);
         var personalIntro = Card(); personalIntro.Dock = DockStyle.Top;
-        personalIntro.Controls.Add(SectionTitle("Personalize tongue tracking"));
-        personalIntro.Controls.Add(Info("The bundled developer model works as a demo. Record a quick, focused, or full dataset to improve fit for your mouth, headset position, and expressions."));
+        personalIntro.Controls.Add(SectionTitle("Lower-face calibration"));
+        personalIntro.Controls.Add(Info("Record tongue and cheek poses to fit tracking to your face and headset position. Quick refinement and Full dataset include 21 cheek camera cards. The camera cheek option is experimental and remains off until you enable it."));
         personalLayout.Controls.Add(personalIntro);
         _trainingProgressContainer.Dock = DockStyle.Top;
         _trainingProgressContainer.AutoSize = true;
@@ -349,16 +355,29 @@ internal sealed partial class HubForm
         choices.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
         choices.RowStyles.Add(new RowStyle(SizeType.Percent, 33.33F));
         choices.RowStyles.Add(new RowStyle(SizeType.Percent, 33.34F));
-        choices.Controls.Add(WorkflowCard("Quick refinement · 10–20 min", "Fastest. Corrects common false positives and direction gaps, but inherits some developer-model bias.", _quickDatasets, _quickQueueStatus, _quickRecordedDatasets,
+        choices.Controls.Add(WorkflowCard("Quick refinement · 15–30 min", "Refines the selected tongue model, then trains cheek camera outputs from 21 guided cheek cards. Inherits some parent-model bias.", _quickDatasets, _quickQueueStatus, _quickRecordedDatasets,
             ActionButton("1. Record refinement", async (_, _) => await ConfirmCaptureAsync(TongueDatasetKind.Quick)), ActionButton("2. Train personalized copy", async (_, _) => await TrainTongueAsync(TongueDatasetKind.Quick)),
             ActionButton("Delete selected dataset…", (_, _) => DeleteRecordedDataset(TongueDatasetKind.Quick))), 0, 0);
         choices.Controls.Add(WorkflowCard("Focused diagonals + facial hair · 15–30 min", "Targets diagonal tongue errors and facial-hair shadows with matched hidden and visible poses. Fine-tunes a new model.", _focusedDatasets, _focusedQueueStatus, _focusedRecordedDatasets,
             ActionButton("1. Record focused dataset", async (_, _) => await ConfirmCaptureAsync(TongueDatasetKind.Focused)), ActionButton("2. Train focused copy", async (_, _) => await TrainTongueAsync(TongueDatasetKind.Focused)),
             ActionButton("Delete selected dataset…", (_, _) => DeleteRecordedDataset(TongueDatasetKind.Focused))), 0, 1);
-        choices.Controls.Add(WorkflowCard("Full dataset · 60–120 min", "Best individual coverage and independence from v8. Requires more careful capture time.", _fullDatasets, _fullQueueStatus, _fullRecordedDatasets,
+        choices.Controls.Add(WorkflowCard("Full dataset · 60–120 min", "Broad tongue coverage plus 21 cheek camera cards. Trains a new lower-face copy and requires careful capture time.", _fullDatasets, _fullQueueStatus, _fullRecordedDatasets,
             ActionButton("1. Record full dataset", async (_, _) => await ConfirmCaptureAsync(TongueDatasetKind.Full)), ActionButton("2. Train new personal model", async (_, _) => await TrainTongueAsync(TongueDatasetKind.Full)),
             ActionButton("Delete selected dataset…", (_, _) => DeleteRecordedDataset(TongueDatasetKind.Full))), 0, 2);
         personalLayout.Controls.Add(choices);
+        var cameraCheekTraining = Card(); cameraCheekTraining.Dock = DockStyle.Top;
+        cameraCheekTraining.Controls.Add(SectionTitle("Experimental tongue + cheeks model"));
+        cameraCheekTraining.Controls.Add(Info("Adds cheek camera outputs to a new copy of a selected tongue model. Native cheek calibration remains available. Record all guided poses and test the resulting copy before using it for a session."));
+        cameraCheekTraining.Controls.Add(new Label { Text = "Parent tongue model", AutoSize = true, ForeColor = Muted });
+        cameraCheekTraining.Controls.Add(_cheekCameraBaseModels);
+        cameraCheekTraining.Controls.Add(new Label { Text = "Completed cheek camera dataset", AutoSize = true, ForeColor = Muted });
+        cameraCheekTraining.Controls.Add(_cheekCameraDatasets);
+        cameraCheekTraining.Controls.Add(_cheekCameraDatasetNote);
+        var cameraCheekActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
+        cameraCheekActions.Controls.Add(_recordCameraCheeks);
+        cameraCheekActions.Controls.Add(_trainCameraCheeks);
+        cameraCheekTraining.Controls.Add(cameraCheekActions);
+        personalLayout.Controls.Add(cameraCheekTraining);
 
         var modelsPage = NewPage();
         var manager = Card(); manager.Dock = DockStyle.Fill; manager.AutoSize = false; manager.MinimumSize = new Size(0, 380);
@@ -367,8 +386,8 @@ internal sealed partial class HubForm
         manager.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         manager.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         manager.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        manager.Controls.Add(SectionTitle("Tongue model manager"), 0, 0);
-        manager.Controls.Add(Info("Friendly names leave the paired model files intact. Export creates a portable .qptonguemodel package; import assigns a safe new version."), 0, 1);
+        manager.Controls.Add(SectionTitle("Lower-face model manager"), 0, 0);
+        manager.Controls.Add(Info("Manage tongue models and experimental tongue + camera cheeks copies. Export creates a portable .qptonguemodel package containing the paired files; import assigns a safe new version."), 0, 1);
         var modelBody = new Panel { Dock = DockStyle.Fill, BackColor = Inset };
         modelBody.Controls.Add(_modelList);
         modelBody.Controls.Add(_modelEmpty);
@@ -441,7 +460,7 @@ internal sealed partial class HubForm
             FitPageText(page);
             page.ResumeLayout(true);
         };
-        var titles = new[] { "First-time setup", "Live tracking", "Tongue personalization", "Model manager", "Activity" };
+        var titles = new[] { "First-time setup", "Live tracking", "Lower-face calibration", "Model manager", "Activity" };
         var subtitles = new[]
         {
             "Connect your Quest and set up tracking.",
@@ -580,7 +599,7 @@ internal sealed partial class HubForm
                 FitSidebarHeight();
                 tracking.ColumnStyles[0].Width = Math.Max(Px(160),
                     Math.Max(TextRenderer.MeasureText("Eyebrow sensitivity", Font).Width,
-                        TextRenderer.MeasureText("Tongue model", Font).Width) + Px(64));
+                        TextRenderer.MeasureText("Lower-face model", Font).Width) + Px(64));
                 connectionPicker.ColumnStyles[0].Width = Px(155);
                 setupSource.ColumnStyles[0].Width = Px(155);
                 liveSource.ColumnStyles[0].Width = Px(160);

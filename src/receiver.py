@@ -24,7 +24,6 @@ from tongue_calibration import TONGUE_STEPS
 from tongue_still_capture import (
     TONGUE_ARC_PROMPTS,
     TONGUE_CORRECTION_PROMPTS,
-    TONGUE_REFINEMENT_PROMPTS,
     TongueStillCaptureSession,
 )
 from label_capture import LabelSidecarRecorder
@@ -153,6 +152,19 @@ class SharedPreview:
     calibration_keys: list[str] = field(default_factory=list)
     runtime_keys: list[str] = field(default_factory=list)
     running: bool = True
+    subscribers: dict[str, int] = field(default_factory=dict)
+
+    def subscribe(self, requested: str) -> None:
+        with self.lock:
+            self.subscribers[requested] = self.subscribers.get(requested, 0) + 1
+
+    def unsubscribe(self, requested: str) -> None:
+        with self.lock:
+            remaining = self.subscribers.get(requested, 0) - 1
+            if remaining > 0:
+                self.subscribers[requested] = remaining
+            else:
+                self.subscribers.pop(requested, None)
 
     def select(self, choice: int | str) -> bool:
         with self.lock:
@@ -163,21 +175,32 @@ class SharedPreview:
             return True
 
     def update(self, strip: np.ndarray, camera_ids: list[int]) -> None:
+        # Tracking uses the raw strip. JPEG copies are only for open HTTP
+        # previews, so a hidden/no-client preview must not encode every camera.
+        with self.lock:
+            self.available = list(camera_ids)
+            if self.selected != "strip" and self.selected not in camera_ids:
+                self.selected = camera_ids[0]
+            requested = {
+                self.selected_key() if key == "selected" else key
+                for key in self.subscribers
+            }
         encoded: dict[str, bytes] = {}
         for index, camera_id in enumerate(camera_ids):
+            key = f"camera{camera_id}"
+            if key not in requested:
+                continue
             image = strip[:, index * CAMERA_WIDTH : (index + 1) * CAMERA_WIDTH]
             ok, jpeg = cv2.imencode(
                 ".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 85]
             )
             if ok:
-                encoded[f"camera{camera_id}"] = jpeg.tobytes()
-        ok, jpeg = cv2.imencode(".jpg", strip, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if ok:
-            encoded["strip"] = jpeg.tobytes()
+                encoded[key] = jpeg.tobytes()
+        if "strip" in requested:
+            ok, jpeg = cv2.imencode(".jpg", strip, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if ok:
+                encoded["strip"] = jpeg.tobytes()
         with self.lock:
-            self.available = camera_ids
-            if self.selected != "strip" and self.selected not in camera_ids:
-                self.selected = camera_ids[0]
             self.jpegs = encoded
             self.generation += 1
             self.lock.notify_all()
@@ -228,6 +251,7 @@ class MjpegHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.end_headers()
         generation = -1
+        self.shared.subscribe(requested)
         try:
             while self.shared.running:
                 with self.shared.lock:
@@ -253,6 +277,8 @@ class MjpegHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(b"\r\n")
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            self.shared.unsubscribe(requested)
 
     def log_message(self, _format: str, *_args: object) -> None:
         return
@@ -392,6 +418,9 @@ def label_strip(
 
 
 def main() -> int:
+    # These small camera operations share a process with neural inference and
+    # the VR apps. OpenCV's full-machine worker pool adds contention here.
+    cv2.setNumThreads(1)
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=27273)
@@ -417,6 +446,8 @@ def main() -> int:
     parser.add_argument("--tongue-correction-calibration", action="store_true")
     parser.add_argument("--tongue-refinement-calibration", action="store_true")
     parser.add_argument("--tongue-arc-calibration", action="store_true")
+    parser.add_argument("--cheek-still-calibration", action="store_true")
+    parser.add_argument("--cheek-output", action="store_true")
     parser.add_argument("--model")
     parser.add_argument("--model-device", default="auto")
     parser.add_argument("--tongue-model")
@@ -484,6 +515,10 @@ def main() -> int:
         parser.error("--tongue-correction-calibration requires --record")
     if arguments.tongue_refinement_calibration and arguments.record is None:
         parser.error("--tongue-refinement-calibration requires --record")
+    if arguments.cheek_still_calibration and arguments.record is None:
+        parser.error("--cheek-still-calibration requires --record")
+    if arguments.cheek_still_calibration and arguments.no_window:
+        parser.error("--cheek-still-calibration requires the visible prompt window")
     if arguments.tongue_arc_calibration and arguments.record is None:
         parser.error("--tongue-arc-calibration requires --record")
     calibration_modes = sum((
@@ -493,6 +528,7 @@ def main() -> int:
         bool(arguments.tongue_correction_calibration),
         bool(arguments.tongue_refinement_calibration),
         bool(arguments.tongue_arc_calibration),
+        bool(arguments.cheek_still_calibration),
     ))
     if calibration_modes > 1:
         parser.error("choose only one calibration mode")
@@ -509,13 +545,15 @@ def main() -> int:
         parser.error("--model comparison requires live factory labels")
     if arguments.tongue_model and arguments.no_labels:
         parser.error("--tongue-model requires live native TongueOut confidence")
+    if arguments.cheek_output and not arguments.tongue_model:
+        parser.error("--cheek-output requires a trained lower-face model")
     if arguments.tongue_model and (
         arguments.model or arguments.open_source_preview or arguments.hybrid_preview
         or arguments.calibration or arguments.tongue_calibration
         or arguments.tongue_still_calibration or arguments.eye_calibration
         or arguments.tongue_correction_calibration
         or arguments.tongue_refinement_calibration
-        or arguments.tongue_arc_calibration
+        or arguments.tongue_arc_calibration or arguments.cheek_still_calibration
     ):
         parser.error("--tongue-model must run by itself")
     if (arguments.open_source_preview or arguments.hybrid_preview
@@ -580,13 +618,13 @@ def main() -> int:
     tongue_still_session: TongueStillCaptureSession | None = None
     calibration_completed = False
     labels_live_reported: bool | None = None
-    manual_reference_reported: bool | None = None
+    manual_reference_reported: tuple[bool, bool] | None = None
     prompt_window_name = (
-        "Quest Pro tongue training capture"
+        "Quest Pro lower-face calibration"
         if (arguments.tongue_calibration or arguments.tongue_still_calibration
             or arguments.tongue_correction_calibration
             or arguments.tongue_refinement_calibration
-            or arguments.tongue_arc_calibration)
+            or arguments.tongue_arc_calibration or arguments.cheek_still_calibration)
         else "Quest Pro whole-face calibration"
     )
     model_window_name = "Quest Pro pilot model validation"
@@ -597,7 +635,11 @@ def main() -> int:
     tongue_inference_worker = None
     pupil_tracker = None
     pupil_broadcaster = None
+    pupil_worker = None
+    pupil_backend_reported = None
+    cheek_broadcaster = None
     last_pupil_status = 0.0
+    last_cheek_status = 0.0
     open_source_window_name = "Quest Pro open-source model preview"
     open_source_preview = None
     hybrid_preview = None
@@ -639,39 +681,30 @@ def main() -> int:
             elif (arguments.tongue_still_calibration
                   or arguments.tongue_correction_calibration
                   or arguments.tongue_refinement_calibration
-                  or arguments.tongue_arc_calibration):
-                tongue_still_session = TongueStillCaptureSession(
-                    capture_writer.path.with_suffix(".qpsession.json"),
-                    prompts=(
-                        TONGUE_ARC_PROMPTS
-                        if arguments.tongue_arc_calibration
-                        else TONGUE_REFINEMENT_PROMPTS
-                        if arguments.tongue_refinement_calibration
-                        else TONGUE_CORRECTION_PROMPTS
-                        if arguments.tongue_correction_calibration
-                        else None
-                    ),
-                    session_type=(
-                        "tongue-stereo-arc-v3"
-                        if arguments.tongue_arc_calibration
-                        else "tongue-stereo-refinement-v2"
-                        if arguments.tongue_refinement_calibration
-                        else "tongue-stereo-corrections-v1"
-                        if arguments.tongue_correction_calibration
-                        else "tongue-stereo-stills-v1"
-                    ),
-                    title=(
-                        "Quest Pro tongue extreme-arc refinement"
-                        if arguments.tongue_arc_calibration
-                        else "Quest Pro second-stage tongue refinement"
-                        if arguments.tongue_refinement_calibration
-                        else "Quest Pro targeted tongue correction capture"
-                        if arguments.tongue_correction_calibration
-                        else "Quest Pro manual stereo tongue capture"
-                    ),
-                )
+                  or arguments.tongue_arc_calibration
+                  or arguments.cheek_still_calibration):
+                journal_path = capture_writer.path.with_suffix(".qpsession.json")
+                if arguments.tongue_still_calibration or arguments.tongue_refinement_calibration:
+                    from cheek_still_capture import LowerFaceCaptureSession
+                    tongue_still_session = LowerFaceCaptureSession(
+                        journal_path,
+                        refinement=arguments.tongue_refinement_calibration,
+                    )
+                elif arguments.cheek_still_calibration:
+                    from cheek_still_capture import CheekStillCaptureSession
+                    tongue_still_session = CheekStillCaptureSession(journal_path)
+                else:
+                    tongue_still_session = TongueStillCaptureSession(
+                        journal_path,
+                        prompts=(TONGUE_ARC_PROMPTS if arguments.tongue_arc_calibration
+                                 else TONGUE_CORRECTION_PROMPTS),
+                        session_type=("tongue-stereo-arc-v3" if arguments.tongue_arc_calibration
+                                      else "tongue-stereo-corrections-v1"),
+                        title=("Quest Pro tongue extreme-arc refinement" if arguments.tongue_arc_calibration
+                               else "Quest Pro targeted tongue correction capture"),
+                    )
                 print(
-                    f"Manual stereo tongue capture: "
+                    f"Manual stereo mouth capture: "
                     f"{len(tongue_still_session.prompts)} cards; "
                     "SPACE saves exactly one synchronized pair"
                 )
@@ -723,9 +756,16 @@ def main() -> int:
                 visibility_mode=arguments.tongue_visibility_mode,
             )
             tongue_broadcaster = TongueBroadcaster(enabled=arguments.tongue_output)
+            if arguments.cheek_output:
+                from cheek_camera import CameraCheekBroadcaster
+                if not {"cheekPuffLeft", "cheekPuffRight"}.issubset(tongue_model_preview.target_names):
+                    raise ValueError("Select a trained tongue-and-cheek camera model before enabling Camera cheek puff")
+                cheek_broadcaster = CameraCheekBroadcaster(enabled=True)
+                print("EXPERIMENTAL_CHEEK_CAMERA_OUTPUT_ON native_fallback=enabled", flush=True)
             tongue_inference_worker = TongueInferenceWorker(
                 tongue_model_preview, tongue_broadcaster,
                 render_preview=not arguments.no_window,
+                cheek_broadcaster=cheek_broadcaster,
             )
             print(
                 f"Loaded opt-in stereo tongue model on "
@@ -762,9 +802,19 @@ def main() -> int:
             )
         if arguments.pupil_output:
             from pupil_dilation import PupilBroadcaster, RelativePupilTracker
+            from pupil_inference import PupilInferenceWorker
 
             pupil_tracker = RelativePupilTracker(sensitivity=arguments.pupil_sensitivity)
             pupil_broadcaster = PupilBroadcaster()
+            pupil_worker = PupilInferenceWorker(pupil_tracker, pupil_broadcaster)
+            print(
+                f"INFERENCE_BACKEND feature=pupil backend={pupil_tracker.backend} "
+                f"device={pupil_tracker.device} name={pupil_tracker.device_name}",
+                flush=True,
+            )
+            pupil_backend_reported = pupil_tracker.backend
+            if pupil_tracker.backend_notice:
+                print(f"PUPIL_BACKEND_NOTICE {pupil_tracker.backend_notice}", flush=True)
             print(
                 "Experimental relative pupil dilation ON. Each eye starts at "
                 f"a session baseline of 5 mm; response {arguments.pupil_sensitivity:.1f}x. "
@@ -858,6 +908,9 @@ def main() -> int:
             if magic != MAGIC or version != 3 or header_size != HEADER.size:
                 raise ValueError("Unexpected live-stream header")
             camera_ids = camera_ids_from_mask(camera_mask)
+            if (arguments.cheek_still_calibration or arguments.tongue_still_calibration
+                    or arguments.tongue_refinement_calibration) and camera_ids not in ([2, 3], [2, 3, 4]):
+                raise ValueError("Lower-face capture requires mouth or face mode (cameras 2 and 3)")
             if pupil_tracker is not None and not {0, 1}.issubset(camera_ids):
                 raise ValueError("Pupil output requires both eye cameras; use camera mode eyes or all")
             expected_width = len(camera_ids) * CAMERA_WIDTH
@@ -900,9 +953,21 @@ def main() -> int:
             strip = np.frombuffer(payload, dtype=np.uint8).reshape((height, stride))
             current_ids[:] = camera_ids
             pupil_values: tuple[float | None, float | None] = (None, None)
-            if pupil_tracker is not None and pupil_broadcaster is not None:
-                pupil_values = pupil_tracker.update(strip, camera_ids)
-                pupil_broadcaster.send(pupil_values)
+            pupil_result = None
+            if pupil_worker is not None:
+                pupil_worker.submit(strip, camera_ids)
+                pupil_result = pupil_worker.latest()
+                if pupil_result is not None:
+                    pupil_values = pupil_result.values
+                    if pupil_result.backend != pupil_backend_reported:
+                        print(
+                            f"INFERENCE_BACKEND feature=pupil backend={pupil_result.backend} "
+                            f"device={pupil_result.device} name={pupil_result.device_name}",
+                            flush=True,
+                        )
+                        pupil_backend_reported = pupil_result.backend
+                        if pupil_result.notice:
+                            print(f"PUPIL_BACKEND_NOTICE {pupil_result.notice}", flush=True)
                 if time.monotonic() - last_pupil_status >= 2.0:
                     def show(value: float | None) -> str:
                         return f"{value:.2f}" if value is not None else "warming/invalid"
@@ -910,8 +975,13 @@ def main() -> int:
                     print(
                         "PUPIL_STATUS relative_mm "
                         f"left={show(pupil_values[0])} right={show(pupil_values[1])} "
-                        f"left_state={pupil_tracker.eyes[0].status.replace(' ', '_')} "
-                        f"right_state={pupil_tracker.eyes[1].status.replace(' ', '_')}",
+                        f"left_state={pupil_result.states[0].replace(' ', '_') if pupil_result else 'warming'} "
+                        f"right_state={pupil_result.states[1].replace(' ', '_') if pupil_result else 'warming'} "
+                        f"processing_ms={pupil_result.processing_ms:.1f} "
+                        f"age_ms={pupil_result.age_ms:.1f} "
+                        f"dropped_frames={pupil_result.dropped_frames}"
+                        if pupil_result else "PUPIL_STATUS left=warming/invalid right=warming/invalid "
+                        "left_state=warming right_state=warming",
                         flush=True,
                     )
                     last_pupil_status = time.monotonic()
@@ -930,7 +1000,7 @@ def main() -> int:
                 interval_bytes = 0
                 fps_started = now
 
-            if (tongue_still_session is not None or tongue_model_preview is not None) and now - transport_report_at >= 5.0:
+            if (tongue_still_session is not None or tongue_model_preview is not None or pupil_worker is not None) and now - transport_report_at >= 5.0:
                 source_gaps, arrival_gaps = stream_gap_stats.summaries()
                 print(
                     "TRANSPORT_QUALITY "
@@ -973,6 +1043,18 @@ def main() -> int:
                     label_recorder.schema_names if label_recorder else [],
                 )
                 tongue_prediction, tongue_model_image = tongue_inference_worker.latest()
+                if (cheek_broadcaster is not None and tongue_prediction is not None
+                        and now - last_cheek_status >= 2.0):
+                    names = tongue_model_preview.target_names
+                    left = float(tongue_prediction.values[names.index("cheekPuffLeft")])
+                    right = float(tongue_prediction.values[names.index("cheekPuffRight")])
+                    print(
+                        f"CHEEK_CAMERA_STATUS left={left:.3f} right={right:.3f} "
+                        f"inference_ms={tongue_prediction.inference_ms:.1f} "
+                        f"pipeline_ms={tongue_prediction.pipeline_ms:.1f} "
+                        f"dropped_frames={tongue_prediction.dropped_frames}", flush=True,
+                    )
+                    last_cheek_status = now
             if open_source_preview is not None:
                 open_source_prediction = open_source_preview.predict(strip)
                 factory_sample = (
@@ -1012,7 +1094,7 @@ def main() -> int:
                         label_recorder.sample_count if label_recorder else 0,
                         frame_replay_stats.suspected_replays,
                         *stream_gap_stats.summaries(),
-                        pupil_detections=pupil_tracker.detections if pupil_tracker else None,
+                        pupil_detections=pupil_result.detections if pupil_result else None,
                         pupil_values=pupil_values if pupil_tracker else None,
                     ),
                 )
@@ -1092,19 +1174,23 @@ def main() -> int:
                     ),
                 )
             if tongue_still_session is not None:
-                labels_ready_now = bool(
+                cheek_card = arguments.cheek_still_calibration or getattr(
+                    tongue_still_session, "is_cheek_card", False)
+                labels_ready_now = cheek_card or bool(
                     label_recorder is not None
                     and label_recorder.manual_tongue_reference_ready()
                 )
-                if labels_ready_now != manual_reference_reported:
+                if (cheek_card, labels_ready_now) != manual_reference_reported:
                     print(
+                        "LABEL_PREFLIGHT_OK mode=cheek-stills source=pose-cards native_labels=not_required"
+                        if cheek_card else
                         "LABEL_PREFLIGHT_OK mode=manual-stills packets=fresh; "
                         "pose cards provide tongue targets"
                         if labels_ready_now else
                         "LABEL_PREFLIGHT_WAITING mode=manual-stills; "
                         "start the selected tracking app, SteamVR, and VRCFaceTracking"
                     )
-                    manual_reference_reported = labels_ready_now
+                    manual_reference_reported = (cheek_card, labels_ready_now)
                 for calibration_key in shared.take_calibration_keys():
                     if calibration_key == " " and not labels_ready_now:
                         action = "not_ready"
@@ -1160,10 +1246,16 @@ def main() -> int:
                 )
         if tongue_inference_worker is not None:
             tongue_inference_worker.close()
+        if cheek_broadcaster is not None:
+            cheek_broadcaster.close()
+            print("EXPERIMENTAL_CHEEK_CAMERA_OUTPUT_OFF native=restored", flush=True)
         if tongue_broadcaster is not None:
             tongue_broadcaster.close()
             print("EXPERIMENTAL_TONGUE_OUTPUT_OFF stock=restored")
-        if pupil_broadcaster is not None:
+        if pupil_worker is not None:
+            pupil_worker.close()
+            print("EXPERIMENTAL_PUPIL_OUTPUT_OFF stock=restored")
+        elif pupil_broadcaster is not None:
             pupil_broadcaster.close()
             print("EXPERIMENTAL_PUPIL_OUTPUT_OFF stock=restored")
         if calibration_session is not None:
@@ -1175,7 +1267,7 @@ def main() -> int:
         if tongue_still_session is not None:
             tongue_still_session.finish(completed=calibration_completed)
             state = "complete" if calibration_completed else "stopped early but recoverable"
-            print(f"Manual tongue session {state}: {tongue_still_session.path}")
+            print(f"Manual lower-face session {state}: {tongue_still_session.path}")
         if capture_writer is not None:
             capture_writer.close(completed=capture_completed)
             state = "complete" if capture_completed else "recoverable but incomplete"

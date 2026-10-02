@@ -74,6 +74,8 @@ public sealed class TrackingModule : ExtTrackingModule
     private UdpClient? _gazeSocket;
     private UdpClient? _tongueSocket;
     private UdpClient? _pupilSocket;
+    private UdpClient? _cheekCameraSocket;
+    private readonly CheekCameraReceiver _cheekCamera = new();
     private UdpClient? _steamLabelSocket;
     private UdpClient? _cheekTelemetrySocket;
     private static readonly IPEndPoint CheekTelemetryEndpoint = new(IPAddress.Loopback, CheekPuffTelemetry.Port);
@@ -199,6 +201,16 @@ public sealed class TrackingModule : ExtTrackingModule
             Logger.LogError(error, "Could not bind the local Quest Pro pupil port {Port}", PupilPort);
         }
 
+        try
+        {
+            _cheekCameraSocket = new UdpClient(new IPEndPoint(IPAddress.Loopback, CheekCameraReceiver.Port));
+            _cheekCameraSocket.Client.Blocking = false;
+        }
+        catch (SocketException error)
+        {
+            Logger.LogError(error, "Could not bind the local Quest Pro camera cheek port {Port}", CheekCameraReceiver.Port);
+        }
+
         if (!_useSteamLink)
             TryOpenMap();
         try
@@ -240,6 +252,7 @@ public sealed class TrackingModule : ExtTrackingModule
         ReceiveGaze();
         ReceiveTongue();
         ReceivePupil();
+        ReceiveCameraCheeks();
         if (_useSteamLink)
         {
             UpdateSteamLink();
@@ -271,7 +284,10 @@ public sealed class TrackingModule : ExtTrackingModule
             if (lowerFaceAvailable)
                 UpdateMouth(expressions, faceFlags, NativeFaceSource.VirtualDesktop);
             else
+            {
                 UpdateTongueOutput(expressions, faceFlags, NativeFaceSource.VirtualDesktop, nativeAvailable: false);
+                UpdateCheekOutput(default, nativeAvailable: false);
+            }
         }
         Thread.Sleep(5);
     }
@@ -288,6 +304,9 @@ public sealed class TrackingModule : ExtTrackingModule
         _tongueSocket = null;
         _pupilSocket?.Dispose();
         _pupilSocket = null;
+        _cheekCameraSocket?.Dispose();
+        _cheekCameraSocket = null;
+        _cheekCamera.Reset();
         _steamSource?.Dispose();
         _steamSource = null;
         _steamLabelSocket?.Dispose();
@@ -523,6 +542,27 @@ public sealed class TrackingModule : ExtTrackingModule
         }
     }
 
+    private void ReceiveCameraCheeks()
+    {
+        foreach (byte[] packet in LocalDatagrams.ReadPending(_cheekCameraSocket))
+            _cheekCamera.Receive(packet, _tickClock());
+    }
+
+    private void UpdateCheekOutput(ReadOnlySpan<float> values, bool nativeAvailable)
+    {
+        CheekPuffWeights native = default;
+        if (nativeAvailable)
+        {
+            RefreshCheekPuffMode();
+            native = _cheekPuffTracker.Update(values, _cheekPuffMode,
+                _tickClock(), _cheekPuffCalibration);
+        }
+        CheekPuffWeights? resolved = _cheekCamera.Resolve(_tickClock(), nativeAvailable, native);
+        if (resolved is not CheekPuffWeights cheeks) return;
+        Set((int)UnifiedExpressions.CheekPuffLeft, cheeks.Left);
+        Set((int)UnifiedExpressions.CheekPuffRight, cheeks.Right);
+    }
+
     private void ReceiveTongue()
     {
         if (_tongueSocket is null)
@@ -650,10 +690,7 @@ public sealed class TrackingModule : ExtTrackingModule
         // Both sources use the same left/right XR_FB cheek indices. The Hub
         // selects native passthrough, calibrated strength, balanced separation,
         // or a confirmed 1/0 pose.
-        RefreshCheekPuffMode();
-        CheekPuffWeights cheeks = _cheekPuffTracker.Update(values, _cheekPuffMode, frameTickMs, _cheekPuffCalibration);
-        Set((int)UnifiedExpressions.CheekPuffLeft, cheeks.Left);
-        Set((int)UnifiedExpressions.CheekPuffRight, cheeks.Right);
+        UpdateCheekOutput(values, nativeTongueAvailable);
         Set((int)UnifiedExpressions.CheekSquintLeft, values[4]);
         Set((int)UnifiedExpressions.CheekSquintRight, values[5]);
         RefreshCheekSuckMode();
@@ -716,7 +753,10 @@ public sealed class TrackingModule : ExtTrackingModule
             UpdatePupilOutput(now, nativeAvailable: false);
         }
         if (_needsExpression)
+        {
             UpdateTongueOutput(default, 0, NativeFaceSource.VirtualDesktop, nativeAvailable: false);
+            UpdateCheekOutput(default, nativeAvailable: false);
+        }
     }
 
     private void UpdateGazeOutput(long now, bool left, bool nativeAvailable,
@@ -772,9 +812,11 @@ public sealed class TrackingModule : ExtTrackingModule
         bool drained = LocalDatagrams.DiscardPending(_gazeSocket);
         drained &= LocalDatagrams.DiscardPending(_tongueSocket);
         drained &= LocalDatagrams.DiscardPending(_pupilSocket);
+        drained &= LocalDatagrams.DiscardPending(_cheekCameraSocket);
         drained &= _steamSource?.DiscardPending() ?? true;
         foreach (LiveOverlayState overlay in OverlayStates()) overlay.DiscardPackets();
         _tongueDirty = false;
+        _cheekCamera.DiscardPackets();
         return drained;
     }
 
@@ -790,6 +832,7 @@ public sealed class TrackingModule : ExtTrackingModule
     private void ResetOverlayState()
     {
         foreach (LiveOverlayState overlay in OverlayStates()) overlay.Reset();
+        _cheekCamera.Reset();
         _tongueDirty = false;
     }
 

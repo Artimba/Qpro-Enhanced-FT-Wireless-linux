@@ -83,6 +83,7 @@ internal sealed partial class HubForm
         if (_modelEmpty.Visible) _modelEmpty.BringToFront();
         UpdateTongueModelNote();
         ReloadDatasetQueues();
+        ReloadCameraCheekWorkflow();
         UpdateControlState();
     }
 
@@ -131,7 +132,7 @@ internal sealed partial class HubForm
         var model = _tongueModels.SelectedItem as FileChoice;
         var version = model is null ? 0 : VersionFromPath(model.Primary);
         _tongueModelNote.Text = model?.HasMoustacheIcon == true
-            ? "Highly experimental: developer v8 extended with a beard/moustache capture from one wearer. Independent clean-shaven validation is pending. The developer v8 demo remains available."
+            ? "Highly experimental: includes the Mustachio beard/moustache training branch. Independent clean-shaven validation is pending. The developer v8 demo remains available."
             : model?.IsExperimental == true
                 ? "Highly experimental tongue model. Independent wearer validation is pending. The developer v8 demo remains available."
                 : version == 8
@@ -140,6 +141,8 @@ internal sealed partial class HubForm
                 ? "No complete gate/direction model pair was found."
                 : "Personal model discovered in this release folder. The bundled developer v8 remains unchanged.";
         _tongueModelNote.Text += " Stop tracking before changing models, then press Start tracking to load the selection.";
+        if (SelectedModelHasCameraCheeks())
+            _tongueModelNote.Text += " This experimental copy also has camera cheek puff outputs; enable Camera cheek puff separately to use them.";
     }
 
     private async Task ConfirmCaptureAsync(TongueDatasetKind kind)
@@ -166,21 +169,21 @@ internal sealed partial class HubForm
         }
         var title = kind switch
         {
-            TongueDatasetKind.Quick => "Start quick tongue refinement?",
+            TongueDatasetKind.Quick => "Start quick lower-face refinement?",
             TongueDatasetKind.Focused => "Start focused tongue capture?",
-            _ => "Start full tongue capture?",
+            _ => "Start full lower-face capture?",
         };
         var estimate = kind switch
         {
-            TongueDatasetKind.Quick => "about 10–20 minutes",
+            TongueDatasetKind.Quick => "about 15–30 minutes",
             TongueDatasetKind.Focused => "about 15–30 minutes",
             _ => "about 60–120 minutes",
         };
         var purpose = kind switch
         {
-            TongueDatasetKind.Quick => "This creates a correction dataset that fine-tunes a new copy of the developer model. It is faster, but cannot replace the breadth of a full personal dataset.",
+            TongueDatasetKind.Quick => "This refines the selected tongue model and records 21 cheek camera cards. Training creates a separate tongue + cheeks copy. Camera cheeks remain experimental and are enabled separately in Live tracking.",
             TongueDatasetKind.Focused => "This records fixed diagonal tongue poses plus matched tongue-hidden and tongue-visible poses with facial hair. Keep the tongue visible in both camera views for each visible card. It fine-tunes a new model without replacing your other captures or models.",
-            _ => "This records a much broader personal dataset and is the best-quality option, but it requires many carefully held poses.",
+            _ => "This records broad tongue coverage and 21 cheek camera cards. Training creates a new personal lower-face copy. It requires many carefully held poses; camera cheeks remain experimental and are enabled separately in Live tracking.",
         };
         var choice = MessageBox.Show(
             this,
@@ -201,7 +204,7 @@ internal sealed partial class HubForm
                 {
                     TongueDatasetKind.Quick => "Quick refinement capture",
                     TongueDatasetKind.Focused => "Focused tongue capture",
-                    _ => "Full tongue capture",
+                    _ => "Full lower-face capture",
                 },
                 "build-and-run.ps1",
                 "-TrackingSource", _environment.TrackingSourceArgument,
@@ -217,9 +220,9 @@ internal sealed partial class HubForm
             var proposed = dataset.DisplayName.StartsWith("Dataset ", StringComparison.Ordinal)
                 ? kind switch
                 {
-                    TongueDatasetKind.Quick => "My tongue refinement",
+                    TongueDatasetKind.Quick => "My lower-face refinement",
                     TongueDatasetKind.Focused => "My diagonal and facial hair refinement",
-                    _ => "My full tongue dataset",
+                    _ => "My full lower-face dataset",
                 }
                 : dataset.DisplayName;
             var name = PromptForText(
@@ -442,13 +445,32 @@ internal sealed partial class HubForm
             var created = TongueModelVersions().Where(version => !versionsBefore.Contains(version)).OrderDescending().FirstOrDefault();
             if (created > 0)
             {
+                // The trainer's result determines whether cheeks were trained.
+                // An older tongue-only capture must not inherit a parent's
+                // camera-cheek flag after its new tongue checkpoint is written.
+                JsonObject? resultMetadata = ReadModelMetadata(created);
+                JsonObject? classification = (resultMetadata ??
+                    (parentVersion > 0 ? ReadModelMetadata(parentVersion) : null))?.DeepClone()?.AsObject();
+                if (resultMetadata?["hasCameraCheeks"] is not JsonValue cheekFlag ||
+                    !cheekFlag.TryGetValue<bool>(out var hasCheeks) || !hasCheeks)
+                    classification?.Remove("hasCameraCheeks");
+                if (parentVersion > 0)
+                {
+                    classification ??= new JsonObject();
+                    JsonObject? parentMetadata = ReadModelMetadata(parentVersion);
+                    classification["parentVersion"] = parentVersion;
+                    classification["parentDisplayName"] = ModelFriendlyName(parentVersion, parentMetadata);
+                    classification["parentModelKind"] = HasMoustacheModelIcon(parentMetadata)
+                        ? "mustachio-experimental" : parentMetadata?["modelKind"]?.DeepClone();
+                    if (IsExperimentalModelMetadata(parentMetadata)) classification["isExperimental"] = true;
+                }
                 WriteModelMetadata(created, dataset.DisplayName, dataset.SessionPath, kind switch
                 {
                     TongueDatasetKind.Quick => "quick refinement",
                     TongueDatasetKind.Focused when dataset.LegacyDiagonalOnly => "legacy diagonal-only refinement",
                     TongueDatasetKind.Focused => "focused diagonal and facial hair refinement",
                     _ => "full personal dataset",
-                }, parentVersion > 0 ? ReadModelMetadata(parentVersion) : null);
+                }, classification);
                 AppendLog($"Model v{created} named “{dataset.DisplayName}”.");
             }
             ReloadProfiles();
@@ -465,12 +487,19 @@ internal sealed partial class HubForm
                         break;
                     }
                 }
+                if (_cameraCheekPuff.Checked && !SelectedModelHasCameraCheeks())
+                {
+                    _cameraCheekPuff.Checked = false;
+                    AppendLog("This tongue-only capture has no trained cheek camera outputs. Camera cheek puff is off; record the new lower-face cheek cards to train a combined copy.");
+                }
             }
             FinishTrainingProgress(created > 0);
             if (created > 0)
             {
                 PlaySfx("trainingComplete.wav");
-                MessageBox.Show(this, $"Training is complete. “{dataset.DisplayName}” is now available as tongue model v{created}.", "Tongue model ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(this, $"Training is complete. “{dataset.DisplayName}” is now available as lower-face model v{created}." +
+                    (SelectedModelHasCameraCheeks() ? " Enable Camera cheek puff (experimental) in Live tracking to test its cheek outputs." : " This copy contains tongue outputs."),
+                    "Lower-face model ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
         finally { _datasetOperationBusy = false; UpdateControlState(); }
@@ -491,7 +520,8 @@ internal sealed partial class HubForm
         if (!BackendReady()) missing.Add("the PC runtime — use First-time setup step 1");
         if (_gaze.Checked && !EyeModelReady()) missing.Add("the locally prepared gaze patch — use First-time setup step 3: Prepare independent gaze");
         if (_gaze.Checked && _eyeProfiles.SelectedItem is null) missing.Add("an eye profile");
-        if (_tongue.Checked && _tongueModels.SelectedItem is null) missing.Add("a paired tongue model");
+        if ((_tongue.Checked || _cameraCheekPuff.Checked) && _tongueModels.SelectedItem is null) missing.Add("a paired tongue model");
+        if (_cameraCheekPuff.Checked && !SelectedModelHasCameraCheeks()) missing.Add("a trained tongue + cheeks model — use Personalize to record and train cheek camera poses, then select that copy under Lower-face model");
         if (_pupil.Checked && !File.Exists(Path.Combine(_root, "pupil_dilation.py"))) missing.Add("the pupil estimation script — re-extract the complete release");
         return missing;
     }
@@ -502,7 +532,7 @@ internal sealed partial class HubForm
         if (UtilityActionIsBusy()) return;
         _trackingProcesses.RemoveAll(p => p.HasExited);
         if (_trackingProcesses.Any(p => !p.HasExited)) { MessageBox.Show(this, "Tracking is already running."); return; }
-        if (!_gaze.Checked && !_tongue.Checked && !_pupil.Checked) { PlaySfx("warning.wav"); MessageBox.Show(this, "Select at least one tracking feature."); return; }
+        if (!_gaze.Checked && !_tongue.Checked && !_cameraCheekPuff.Checked && !_pupil.Checked) { PlaySfx("warning.wav"); MessageBox.Show(this, "Select at least one tracking feature."); return; }
         _starting = true;
         var startCancellation = new CancellationTokenSource();
         _startCancellation = startCancellation;
@@ -526,8 +556,9 @@ internal sealed partial class HubForm
             File.Delete(_stopFile);
             _start.Enabled = false; _stop.Enabled = true;
             _runStatus.Text = "● Starting…"; _runStatus.ForeColor = Warning;
-            SetStatus(_inferenceStatus, StatusKind.Warning, _tongue.Checked ? "Detecting…" : "Idle");
-            SetStatus(_pupilStatus, StatusKind.Warning, _pupil.Checked ? "CPU starting…" : "Idle");
+            SetStatus(_inferenceStatus, StatusKind.Warning, (_tongue.Checked || _cameraCheekPuff.Checked) ? "Detecting…" : "Idle");
+            _pupilBackendLabel = "Starting";
+            SetStatus(_pupilStatus, StatusKind.Warning, _pupil.Checked ? "Starting…" : "Idle");
             if (_gaze.Checked)
             {
                 _gazeStartupInProgress = true;
@@ -574,11 +605,13 @@ internal sealed partial class HubForm
                     await DisableFailedGazeAsync("The independent-gaze process exited during startup. See Activity.");
             }
             startCancellation.Token.ThrowIfCancellationRequested();
-            if (_tongue.Checked)
+            if (_tongue.Checked || _cameraCheekPuff.Checked)
             {
                 var model = (FileChoice)_tongueModels.SelectedItem!;
-                AppendLog($"Tongue model selected for this session: v{VersionFromPath(model.Primary)} (gate: {Path.GetFileName(model.Primary)}; direction: {Path.GetFileName(model.Secondary)}).");
-                var args = new List<string> { "-TrackingSource", _environment.TrackingSourceArgument, "-TonguePreview", "-EnableTongueOutput", "-MaxFps", (_fps.SelectedItem?.ToString() ?? "24"), "-TongueSmoothing", _smoothing.Value.ToString(), "-TongueVisibilityMode", VisibilityModeValue(), "-TongueModelPath", model.Primary, "-TongueDirectionModelPath", model.Secondary! };
+                AppendLog($"Lower-face model selected for this session: v{VersionFromPath(model.Primary)} (gate: {Path.GetFileName(model.Primary)}; direction: {Path.GetFileName(model.Secondary)}).");
+                var args = new List<string> { "-TrackingSource", _environment.TrackingSourceArgument, "-TonguePreview", "-MaxFps", (_fps.SelectedItem?.ToString() ?? "24"), "-TongueSmoothing", _smoothing.Value.ToString(), "-TongueVisibilityMode", VisibilityModeValue(), "-TongueModelPath", model.Primary, "-TongueDirectionModelPath", model.Secondary! };
+                if (_tongue.Checked) args.Add("-EnableTongueOutput");
+                if (_cameraCheekPuff.Checked) args.Add("-EnableCheekOutput");
                 if (!_cameraPreview.Checked) args.Add("-NoWindow");
                 if (_pupil.Checked) args.AddRange(["-PupilOutput", "-PupilSensitivity", PupilSensitivityValue()]);
                 args.AddRange(["-StopFile", _stopFile]);
@@ -826,6 +859,7 @@ internal sealed partial class HubForm
 
     private void ResetInferenceStatus()
     {
+        _pupilBackendLabel = "Starting";
         SetStatus(_inferenceStatus, StatusKind.Warning, "Idle");
         SetStatus(_pupilStatus, StatusKind.Warning, "Idle");
     }
@@ -854,12 +888,28 @@ internal sealed partial class HubForm
                 _inferenceStatus.AccessibleDescription = name;
             }
         }
+        if (_pupil.Checked)
+        {
+            var match = Regex.Match(line, @"INFERENCE_BACKEND feature=pupil backend=(?<backend>[\w-]+) device=(?<device>\S+) name=(?<name>.*)");
+            if (match.Success)
+            {
+                _pupilBackendLabel = match.Groups["backend"].Value switch
+                {
+                    "amd-rocm" => "AMD ROCm",
+                    "nvidia-cuda" => "NVIDIA CUDA",
+                    "cpu" => "CPU",
+                    _ => "Other"
+                };
+                SetStatus(_pupilStatus, StatusKind.Warning, _pupilBackendLabel + " (warming)");
+                _pupilStatus.AccessibleDescription = match.Groups["name"].Value;
+            }
+        }
         if (_pupil.Checked && line.Contains("PUPIL_STATUS", StringComparison.Ordinal))
         {
             var leftValid = Regex.IsMatch(line, @"\bleft=\d");
             var rightValid = Regex.IsMatch(line, @"\bright=\d");
-            var pupilLabel = leftValid && rightValid ? "CPU (2 eyes)" :
-                leftValid || rightValid ? "CPU (1 eye)" : "CPU (warming)";
+            var pupilLabel = _pupilBackendLabel + (leftValid && rightValid ? " (2 eyes)" :
+                leftValid || rightValid ? " (1 eye)" : " (warming)");
             SetStatus(_pupilStatus, leftValid && rightValid ? StatusKind.Good : StatusKind.Warning, pupilLabel);
             _pupilStatus.AccessibleDescription = line;
         }
