@@ -135,7 +135,9 @@ $sourceFiles = @(
     "tests\hub-rocm\HubRocmTests.csproj",
     "tests\hub-rocm\Program.cs",
     "tests\hub-gaze\HubGazeTests.csproj",
-    "tests\hub-gaze\Program.cs"
+    "tests\hub-gaze\Program.cs",
+    "tests\cheek-calibration\CheekCalibrationTests.csproj",
+    "tests\cheek-calibration\Program.cs"
 )
 foreach ($file in $sourceFiles) { Copy-SourceFile $file }
 foreach ($hubSource in Get-ChildItem -LiteralPath (Join-Path $root "qpro-hub") -File -Filter "*.cs") {

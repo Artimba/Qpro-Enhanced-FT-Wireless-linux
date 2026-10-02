@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 
 namespace Qpro.Shared;
 
-// Only cheek strengths cross this loopback channel. The calibration
+// Only separated cheek strengths cross this loopback channel. The calibration
 // window never needs camera frames or the rest of the face tracking stream.
 internal static class CheekPuffTelemetry
 {
@@ -12,12 +12,6 @@ internal static class CheekPuffTelemetry
     internal const byte SourceSteamLink = 1;
 
     internal static byte[] Create(byte source, float left, float right)
-        => CreatePacket(source, left, right, raw: false);
-
-    internal static byte[] CreateRaw(byte source, float left, float right)
-        => CreatePacket(source, left, right, raw: true);
-
-    private static byte[] CreatePacket(byte source, float left, float right, bool raw)
     {
         if (source is not (SourceVirtualDesktop or SourceSteamLink))
             throw new ArgumentOutOfRangeException(nameof(source));
@@ -25,7 +19,7 @@ internal static class CheekPuffTelemetry
         packet[0] = (byte)'Q';
         packet[1] = (byte)'C';
         packet[2] = (byte)'P';
-        packet[3] = raw ? (byte)'2' : (byte)'1';
+        packet[3] = (byte)'1';
         packet[4] = source;
         BinaryPrimitives.WriteInt32LittleEndian(packet.AsSpan(8),
             BitConverter.SingleToInt32Bits(Clean(left)));
@@ -36,18 +30,13 @@ internal static class CheekPuffTelemetry
 
     internal static bool TryParse(ReadOnlySpan<byte> packet, out byte source,
         out float left, out float right)
-        => TryParse(packet, out source, out left, out right, out _);
-
-    internal static bool TryParse(ReadOnlySpan<byte> packet, out byte source,
-        out float left, out float right, out bool raw)
     {
         source = 0;
         left = 0;
         right = 0;
-        raw = false;
         if (packet.Length != PacketBytes ||
             packet[0] != (byte)'Q' || packet[1] != (byte)'C' ||
-            packet[2] != (byte)'P' || packet[3] is not ((byte)'1' or (byte)'2') ||
+            packet[2] != (byte)'P' || packet[3] != (byte)'1' ||
             packet[4] is not (SourceVirtualDesktop or SourceSteamLink) ||
             packet[5] != 0 || packet[6] != 0 || packet[7] != 0)
             return false;
@@ -62,7 +51,6 @@ internal static class CheekPuffTelemetry
         source = packet[4];
         left = parsedLeft;
         right = parsedRight;
-        raw = packet[3] == (byte)'2';
         return true;
     }
 

@@ -62,32 +62,19 @@ internal static class CheekPuffMapping
     internal static CheekPuffWeights CalibratedFromFaceWeights(
         ReadOnlySpan<float> weights, CheekPuffCalibration? calibration)
     {
-        // Existing profiles contain Balanced anchors. New personal profiles
-        // contain native paired anchors and their measured cross-talk.
-        if (calibration is not { } valid || !CheekPuffCalibrationProfile.IsValid(valid))
-            return FromFaceWeights(weights);
-        if (valid.RawResponse.HasValue)
-            return CalibratedRaw(RawFromFaceWeights(weights), valid);
+        // Separate left and right with the existing Balanced algorithm before
+        // applying independently measured relaxed and full-strength anchors.
         CheekPuffWeights balanced = FromFaceWeights(weights);
+        if (calibration is not { } valid || !CheekPuffCalibrationProfile.IsValid(valid))
+            return balanced;
         return new CheekPuffWeights(
-            Normalize(balanced.Left, valid.LeftNeutral, valid.LeftFull, valid.LeftDeadZone),
-            Normalize(balanced.Right, valid.RightNeutral, valid.RightFull, valid.RightDeadZone));
+            Normalize(balanced.Left, valid.LeftNeutral, valid.LeftFull),
+            Normalize(balanced.Right, valid.RightNeutral, valid.RightFull));
     }
 
-    private static CheekPuffWeights CalibratedRaw(CheekPuffWeights raw, CheekPuffCalibration calibration)
-    {
-        // The full two-cheek pose can saturate the native channels. Its own
-        // measured anchor keeps both cheeks at full strength even when the
-        // sum of the two individual responses would exceed the input range.
-        var strength = CheekPuffCalibrationProfile.CorrectRawStrength(calibration, raw.Left, raw.Right);
-        var noise = CheekPuffCalibrationProfile.RawNoiseMargins(calibration);
-        return new(Normalize(strength.Left, 0, 1, MathF.Max(CheekPuffCalibrationProfile.RawDeadZoneFloor, noise.Left)),
-            Normalize(strength.Right, 0, 1, MathF.Max(CheekPuffCalibrationProfile.RawDeadZoneFloor, noise.Right)));
-    }
-
-    private static float Normalize(float value, float neutral, float full, float deadZone)
+    private static float Normalize(float value, float neutral, float full)
         => float.IsFinite(value)
-            ? Math.Clamp((value - neutral - deadZone) / (full - neutral - deadZone), 0.0f, 1.0f)
+            ? Math.Clamp((value - neutral) / (full - neutral), 0.0f, 1.0f)
             : 0.0f;
 
     private static float SmoothStep(float low, float high, float value)
@@ -148,13 +135,10 @@ internal sealed class CheekPuffTracker
                 Reset();
                 return CheekPuffMapping.FromFaceWeights(weights);
             }
+            CheekPuffWeights target = CheekPuffMapping.CalibratedFromFaceWeights(weights, valid);
             long elapsedMs = nowMs - _lastCalibratedTickMs;
-            bool restart = !_calibratedInitialized || _lastCalibration != valid ||
-                elapsedMs < 0 || elapsedMs >= CalibratedResetGapMs;
-            if (restart) { _pose = Pose.Neutral; ClearCandidate(); }
-            CheekPuffWeights target = StabilizeCalibratedPose(weights,
-                CheekPuffMapping.CalibratedFromFaceWeights(weights, valid), valid.RawResponse.HasValue, nowMs);
-            if (restart)
+            if (!_calibratedInitialized || _lastCalibration != valid ||
+                elapsedMs < 0 || elapsedMs >= CalibratedResetGapMs)
             {
                 _calibratedOutput = target;
                 _calibratedInitialized = true;
@@ -169,10 +153,6 @@ internal sealed class CheekPuffTracker
                     _calibratedOutput.Left + (target.Left - _calibratedOutput.Left) * blend,
                     _calibratedOutput.Right + (target.Right - _calibratedOutput.Right) * blend);
             }
-            // A confirmed individual pose must not retain a smoothing tail
-            // in the opposite cheek when switching sides.
-            if (_pose == Pose.Left) _calibratedOutput = _calibratedOutput with { Right = 0 };
-            else if (_pose == Pose.Right) _calibratedOutput = _calibratedOutput with { Left = 0 };
             _lastCalibratedTickMs = nowMs;
             return _calibratedOutput;
         }
@@ -250,65 +230,9 @@ internal sealed class CheekPuffTracker
         _lastCalibration = null;
     }
 
-    private CheekPuffWeights StabilizeCalibratedPose(ReadOnlySpan<float> weights,
-        CheekPuffWeights target, bool rawProfile, long nowMs)
+    private Pose Observe(float left, float right, float peak)
     {
-        if (MathF.Max(target.Left, target.Right) <= .04f)
-        {
-            _pose = Pose.Neutral;
-            ClearCandidate();
-            return target;
-        }
-        // New profiles already remove measured cross-talk. Old profiles and
-        // the developer baselines still use the original Balanced strengths;
-        // their raw side lead is needed during a brief symmetric crossover.
-        CheekPuffWeights signal = rawProfile ? target : CheekPuffMapping.RawFromFaceWeights(weights);
-        float peak = MathF.Max(signal.Left, signal.Right);
-        Pose observed = rawProfile ? ObserveCalibrated(target)
-            : Observe(signal.Left, signal.Right, peak, NeutralPeak);
-        bool clearSide = peak > 0 && MathF.Abs(signal.Left - signal.Right) / peak >= .24f &&
-            MathF.Abs(signal.Left - signal.Right) >= .025f;
-        if (_pose == Pose.Neutral)
-        {
-            if (observed is Pose.Left or Pose.Right)
-            {
-                if (clearSide || Confirm(observed, nowMs, BothFromNeutralMs)) Select(observed);
-            }
-            else if (observed == Pose.Both) Select(Pose.Both);
-            else ClearCandidate();
-        }
-        else if (_pose == Pose.Both)
-        {
-            if (observed is Pose.Left or Pose.Right)
-            {
-                if (Confirm(observed, nowMs, SideConfirmationMs)) Select(observed);
-            }
-            else ClearCandidate();
-        }
-        else
-        {
-            Pose opposite = _pose == Pose.Left ? Pose.Right : Pose.Left;
-            if (observed == opposite)
-            {
-                if (Confirm(opposite, nowMs, SideConfirmationMs)) Select(opposite);
-            }
-            else if (observed == Pose.Both)
-            {
-                if (Confirm(Pose.Both, nowMs, BothFromSideMs)) Select(Pose.Both);
-            }
-            else ClearCandidate();
-        }
-        return _pose switch
-        {
-            Pose.Left => target with { Right = 0 },
-            Pose.Right => target with { Left = 0 },
-            _ => target,
-        };
-    }
-
-    private Pose Observe(float left, float right, float peak, float minimumPeak = FullStrengthPeak)
-    {
-        if (peak < minimumPeak) return Pose.Neutral;
+        if (peak < FullStrengthPeak) return Pose.Neutral;
         float difference = MathF.Abs(left - right);
         float asymmetry = difference / peak;
         // Once one side is selected, a steady lead by the other side is
@@ -325,21 +249,8 @@ internal sealed class CheekPuffTracker
         // settled pose. Confirm it briefly before activating either side.
         if (_pose == Pose.Neutral && asymmetry >= 0.14f && difference >= 0.05f)
             return left > right ? Pose.Left : Pose.Right;
-        if (asymmetry <= 0.12f && MathF.Min(left, right) >= minimumPeak)
+        if (asymmetry <= 0.12f && MathF.Min(left, right) >= FullStrengthPeak)
             return Pose.Both;
-        return Pose.Neutral;
-    }
-
-    private Pose ObserveCalibrated(CheekPuffWeights strength)
-    {
-        // The personal fit has already removed measured cross-talk. Both
-        // corrected axes can be active at unequal strengths; raw asymmetry
-        // would otherwise suppress the weaker cheek forever.
-        float activation = _pose == Pose.Both ? .025f : .04f;
-        bool left = strength.Left > activation, right = strength.Right > activation;
-        if (left && right) return Pose.Both;
-        if (left) return Pose.Left;
-        if (right) return Pose.Right;
         return Pose.Neutral;
     }
 
