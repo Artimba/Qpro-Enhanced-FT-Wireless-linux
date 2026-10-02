@@ -12,10 +12,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from capture_format import scan_stereo_mouth_stills
+from capture_format import inspect_capture, scan_stereo_mouth_stills
+from cheek_still_capture import CHEEK_TARGET_NAMES, LOWER_FACE_SESSION_TYPES
 from dataset_inspect import load_labels
 from prepare_training import nearest_label_indices
 from prepare_tongue_training import FACE_HEIGHT
+from prepare_cheek_stills import validate_cheek_session
 from tongue_calibration import TONGUE_TARGET_NAMES
 
 
@@ -113,10 +115,16 @@ def main() -> int:
         "tongue-stereo-corrections-v1",
         "tongue-stereo-refinement-v2",
         "tongue-stereo-arc-v3",
-    }
+    } | LOWER_FACE_SESSION_TYPES
     if session.get("sessionType") not in allowed_session_types:
-        raise ValueError("A manual tongue still or correction session is required")
+        raise ValueError("A manual lower-face or tongue still session is required")
     validate_focused_arc_session(session)
+    lower_face = session.get("sessionType") in LOWER_FACE_SESSION_TYPES
+    if lower_face:
+        validate_cheek_session(session)
+        summary = inspect_capture(capture_path)
+        if not summary["completed"] or summary["truncated"]:
+            raise ValueError("The lower-face camera recording is incomplete")
     entries, frame_width = scan_stereo_mouth_stills(capture_path)
     frame_count = len(entries)
     frame_times = [timestamp for _offset, timestamp in entries]
@@ -130,14 +138,33 @@ def main() -> int:
             f"Session journal does not describe every captured still; missing {missing[:8]}"
         )
 
+    cheek_offset = frame_count  # Unused for legacy tongue-only captures.
+    if lower_face:
+        _cheek_samples, cheek_offset = validate_cheek_session(session, frame_count)
+    cheek_frames = np.asarray([
+        lower_face and sample_by_frame[index]["promptIndex"] >= cheek_offset
+        for index in range(frame_count)
+    ], dtype=np.bool_)
+    if lower_face and not any(
+        not cheek_frames[index] and not sample_by_frame[index].get("excluded", False)
+        for index in range(frame_count)
+    ):
+        raise ValueError("The lower-face capture has no usable tongue stills")
+
     names, labels = load_labels(label_path)
     if "TongueOut" not in names:
         raise ValueError("Factory label stream has no TongueOut channel")
+    if not labels:
+        raise ValueError("Factory label stream has no samples")
     label_times = [int(value["arrivalMonotonicNs"]) for value in labels]
     label_indices, errors_ms = nearest_label_indices(frame_times, label_times)
-    if float(np.max(errors_ms)) > 35.0:
+    # Cheek pose cards supply their own labels. Native factory references are
+    # required for tongue rows only, including if the label feed stops during
+    # the cheek portion of a combined capture.
+    tongue_errors_ms = errors_ms[~cheek_frames]
+    if float(np.max(tongue_errors_ms)) > 35.0:
         raise ValueError(
-            f"Worst still/factory-label alignment is {float(np.max(errors_ms)):.2f} ms"
+            f"Worst tongue still/factory-label alignment is {float(np.max(tongue_errors_ms)):.2f} ms"
         )
 
     output.mkdir(parents=True, exist_ok=True)
@@ -150,6 +177,8 @@ def main() -> int:
     native_expressions = np.zeros((frame_count, len(names)), dtype=np.float32)
     step_ids = np.zeros(frame_count, dtype=np.int16)
     trainable = np.ones(frame_count, dtype=np.bool_)
+    cheek_targets = np.zeros((frame_count, len(CHEEK_TARGET_NAMES)), dtype=np.float32) if lower_face else None
+    cheek_trainable = np.zeros(frame_count, dtype=np.bool_) if lower_face else None
     tongue_index = names.index("TongueOut")
 
     started = time.monotonic()
@@ -176,7 +205,11 @@ def main() -> int:
             native_expressions[index] = factory
             native[index] = factory[tongue_index]
             step_ids[index] = int(sample["promptIndex"])
-            trainable[index] = not bool(sample.get("excluded", False))
+            permitted = not bool(sample.get("excluded", False))
+            trainable[index] = permitted and not cheek_frames[index]
+            if cheek_frames[index]:
+                cheek_targets[index] = [sample["targets"][name] for name in CHEEK_TARGET_NAMES]
+                cheek_trainable[index] = permitted
             if (index + 1) % 50 == 0 or index + 1 == frame_count:
                 rate = (index + 1) / max(0.001, time.monotonic() - started)
                 print(f"Prepared {index + 1}/{frame_count} stills ({rate:.1f}/s)")
@@ -188,6 +221,9 @@ def main() -> int:
     np.save(output / "timestamps.npy", np.asarray(frame_times, dtype=np.int64))
     np.save(output / "step_ids.npy", step_ids)
     np.save(output / "trainable.npy", trainable)
+    if lower_face:
+        np.save(output / "cheek_targets.npy", cheek_targets)
+        np.save(output / "cheek_trainable.npy", cheek_trainable)
     metadata = {
         "version": 2,
         "datasetType": "manual-stereo-stills",
@@ -205,9 +241,17 @@ def main() -> int:
         "targetNames": list(TONGUE_TARGET_NAMES),
         "factoryExpressionNames": names,
         "capturePolicy": "manually triggered exact synchronized stereo frames",
-        "medianLabelErrorMs": float(np.median(errors_ms)),
-        "maximumLabelErrorMs": float(np.max(errors_ms)),
+        "medianLabelErrorMs": float(np.median(tongue_errors_ms)),
+        "maximumLabelErrorMs": float(np.max(tongue_errors_ms)),
     }
+    if lower_face:
+        metadata.update({
+            "hasCheekCards": True,
+            "cheekTargetNames": list(CHEEK_TARGET_NAMES),
+            "cheekTargetSource": "prompted-cheek-poses",
+            "cheekTrainableFrames": int(np.count_nonzero(cheek_trainable)),
+            "cheekStrengthLabels": "wearer-performed approximate fractions, not measured pressure",
+        })
     (output / "metadata.json").write_text(
         json.dumps(metadata, indent=2), encoding="utf-8"
     )

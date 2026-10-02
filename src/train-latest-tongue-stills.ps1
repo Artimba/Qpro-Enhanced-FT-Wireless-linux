@@ -15,11 +15,16 @@ $qproSavedGpuVisibility = @{}
 foreach ($name in $qproGpuVisibilityNames) {
     $qproSavedGpuVisibility[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
+$qproSavedGpuEnvironment = @{}
+foreach ($name in @('ROCM_SDK_TARGET_FAMILY', 'QPRO_ROCM_INSTALL_SMOKE_TEST', 'QPRO_ROCM_EXPECTED_GFX_TARGET')) {
+    $qproSavedGpuEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 function Restore-QproGpuVisibility {
     foreach ($name in $qproGpuVisibilityNames) {
         [Environment]::SetEnvironmentVariable($name, $qproSavedGpuVisibility[$name], 'Process')
     }
 }
+$trainingRunRoot = $null
 Push-Location $PSScriptRoot
 try {
     function Test-QproTrainingPython([string]$Candidate) {
@@ -65,7 +70,7 @@ try {
     }
     if (-not $python) {
         Restore-QproGpuVisibility
-        Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue
+        [Environment]::SetEnvironmentVariable('ROCM_SDK_TARGET_FAMILY', $qproSavedGpuEnvironment['ROCM_SDK_TARGET_FAMILY'], 'Process')
         $sharedPython = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'QproFaceTracking\runtime\.venv\Scripts\python.exe'
         $candidates = @(
             $env:QPRO_PYTHON,
@@ -87,7 +92,7 @@ try {
             ForEach-Object {
                 try {
                     $session = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
-                    if ($session.sessionType -eq "tongue-stereo-stills-v1" -and $session.completed) {
+                    if ($session.sessionType -in @("tongue-stereo-stills-v1", "lower-face-stills-v1") -and $session.completed) {
                         $_
                     }
                 } catch {
@@ -99,7 +104,7 @@ try {
         throw "No completed manual tongue-still capture was found under .\captures."
     }
     $sessionMetadata = Get-Content -LiteralPath $latest.FullName -Raw | ConvertFrom-Json
-    if ($sessionMetadata.sessionType -ne "tongue-stereo-stills-v1" -or -not $sessionMetadata.completed) {
+    if ($sessionMetadata.sessionType -notin @("tongue-stereo-stills-v1", "lower-face-stills-v1") -or -not $sessionMetadata.completed) {
         throw "The selected dataset is not a completed full tongue-still capture."
     }
     $capture = $latest.FullName -replace '\.qpsession\.json$', '.qpcap'
@@ -117,11 +122,14 @@ try {
     } elseif ($occupiedVersions -contains $Version) {
         throw "Tongue model v$Version already has files. Choose an unused version to preserve existing weights."
     }
-    $gateOutput = ".\models\qpro-stereo-tongue-v$Version-gate.pt"
-    $directionOutput = ".\models\qpro-stereo-tongue-v$Version-direction.pt"
+    $trainingRunRoot = Join-Path $PSScriptRoot ('training\lower-face-run-' + [guid]::NewGuid().ToString('N'))
+    $stagedModels = Join-Path $trainingRunRoot 'models'
+    New-Item -ItemType Directory -Path $stagedModels -Force | Out-Null
+    $gateOutput = Join-Path $stagedModels "qpro-stereo-tongue-v$Version-gate.pt"
+    $directionOutput = Join-Path $stagedModels "qpro-stereo-tongue-v$Version-direction.pt"
     Write-Host "TRAIN_STATUS phase=preparing"
     Write-Host "Preparing exact manually selected stereo stills from $capture"
-    & $python .\prepare_tongue_stills.py $capture --output $cache --size 224
+    & $python .\prepare_tongue_stills.py $capture --session $latest.FullName --output $cache --size 224
     if ($LASTEXITCODE -ne 0) { throw "Preparing the manual still dataset failed." }
     $deviceOutput = @(& $python -c "import torch; from qpro_gpu import preferred_torch_device_name; print(preferred_torch_device_name(torch))" | Select-Object -Last 1)
     $deviceExitCode = $LASTEXITCODE
@@ -133,7 +141,8 @@ try {
     $effectiveBatchSize = if ($device -eq "cpu") { [Math]::Min($BatchSize, 16) } else { $BatchSize }
     Write-Host "TRAIN_DEVICE device=$device batch=$effectiveBatchSize"
     if ($device -eq "cpu") { Write-Warning "CUDA is unavailable. CPU fallback is active; full-dataset training may take hours. NVIDIA users should rerun PC runtime setup after installing the current NVIDIA driver." }
-    Write-Host "TRAIN_STAGE index=1 total=2 name=visibility epochs=$Epochs device=$device"
+    $totalStages = if ($sessionMetadata.sessionType -eq 'lower-face-stills-v1') { 3 } else { 2 }
+    Write-Host "TRAIN_STAGE index=1 total=$totalStages name=visibility epochs=$Epochs device=$device"
     Write-Host "Training the visibility checkpoint on $device"
     & $python .\train_tongue_model.py $cache `
         --architecture spatial-stereo-resnet-v2 `
@@ -143,7 +152,7 @@ try {
         --device $device `
         --output $gateOutput
     if ($LASTEXITCODE -ne 0) { throw "Training the visibility checkpoint failed." }
-    Write-Host "TRAIN_STAGE index=2 total=2 name=direction epochs=$Epochs device=$device"
+    Write-Host "TRAIN_STAGE index=2 total=$totalStages name=direction epochs=$Epochs device=$device"
     Write-Host "Training the direction checkpoint on $device"
     & $python .\train_tongue_model.py $cache `
         --architecture spatial-stereo-resnet-v2 `
@@ -153,8 +162,27 @@ try {
         --device $device `
         --output $directionOutput
     if ($LASTEXITCODE -ne 0) { throw "Training the direction checkpoint failed." }
-    Write-Host "MODEL_READY version=$Version gate=$((Resolve-Path -LiteralPath $gateOutput).Path) direction=$((Resolve-Path -LiteralPath $directionOutput).Path)"
+    if ($sessionMetadata.sessionType -eq 'lower-face-stills-v1') {
+        Write-Host "TRAIN_STAGE index=3 total=3 name=cheeks device=$device"
+        & $python .\lower_face_training.py attach --session $latest.FullName --direction $directionOutput --root $trainingRunRoot --version $Version --device $device
+        if ($LASTEXITCODE -ne 0) { throw 'Lower-face cheek training failed. Existing models were kept.' }
+    }
+    & $python .\lower_face_training.py publish --staged-root $trainingRunRoot --root $PSScriptRoot --version $Version
+    if ($LASTEXITCODE -ne 0) { throw 'Publishing the trained lower-face model failed. Existing models were kept.' }
+    Write-Host "MODEL_READY version=$Version gate=$(Join-Path $PSScriptRoot "models\qpro-stereo-tongue-v$Version-gate.pt") direction=$(Join-Path $PSScriptRoot "models\qpro-stereo-tongue-v$Version-direction.pt")"
 } finally {
-    Restore-QproGpuVisibility
-    Pop-Location
+    try {
+        if ($trainingRunRoot -and (Test-Path -LiteralPath $trainingRunRoot)) {
+            $resolvedTemporary = [System.IO.Path]::GetFullPath($trainingRunRoot)
+            $allowedTraining = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'training')).TrimEnd('\') + '\'
+            if (-not $resolvedTemporary.StartsWith($allowedTraining, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe temporary training path.' }
+            Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
+        }
+    } finally {
+        Restore-QproGpuVisibility
+        foreach ($name in $qproSavedGpuEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $qproSavedGpuEnvironment[$name], 'Process')
+        }
+        Pop-Location
+    }
 }

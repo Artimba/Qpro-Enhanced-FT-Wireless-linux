@@ -15,11 +15,17 @@ $qproSavedGpuVisibility = @{}
 foreach ($name in $qproGpuVisibilityNames) {
     $qproSavedGpuVisibility[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
+$qproSavedGpuEnvironment = @{}
+foreach ($name in @('ROCM_SDK_TARGET_FAMILY', 'QPRO_ROCM_INSTALL_SMOKE_TEST', 'QPRO_ROCM_EXPECTED_GFX_TARGET')) {
+    $qproSavedGpuEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 function Restore-QproGpuVisibility {
     foreach ($name in $qproGpuVisibilityNames) {
         [Environment]::SetEnvironmentVariable($name, $qproSavedGpuVisibility[$name], 'Process')
     }
 }
+$parentTemporaryRoot = $null
+$trainingRunRoot = $null
 Push-Location $PSScriptRoot
 try {
     function Test-QproTrainingPython([string]$Candidate) {
@@ -65,7 +71,7 @@ try {
     }
     if (-not $python) {
         Restore-QproGpuVisibility
-        Remove-Item Env:ROCM_SDK_TARGET_FAMILY -ErrorAction SilentlyContinue
+        [Environment]::SetEnvironmentVariable('ROCM_SDK_TARGET_FAMILY', $qproSavedGpuEnvironment['ROCM_SDK_TARGET_FAMILY'], 'Process')
         $sharedPython = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'QproFaceTracking\runtime\.venv\Scripts\python.exe'
         $candidates = @(
             $env:QPRO_PYTHON,
@@ -88,13 +94,13 @@ try {
             ForEach-Object {
                 try {
                     $session = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
-                    if ($session.sessionType -in @("tongue-stereo-corrections-v1", "tongue-stereo-refinement-v2", "tongue-stereo-arc-v3") -and $session.completed) { $_ }
+                    if ($session.sessionType -in @("tongue-stereo-corrections-v1", "tongue-stereo-refinement-v2", "tongue-stereo-arc-v3", "lower-face-refinement-v1") -and $session.completed) { $_ }
                 } catch {}
             } | Select-Object -First 1
     }
     if ($null -eq $latest) { throw "No completed quick-refinement capture was found." }
     $sessionMetadata = Get-Content -LiteralPath $latest.FullName -Raw | ConvertFrom-Json
-    if ($sessionMetadata.sessionType -notin @("tongue-stereo-corrections-v1", "tongue-stereo-refinement-v2", "tongue-stereo-arc-v3") -or -not $sessionMetadata.completed) {
+    if ($sessionMetadata.sessionType -notin @("tongue-stereo-corrections-v1", "tongue-stereo-refinement-v2", "tongue-stereo-arc-v3", "lower-face-refinement-v1") -or -not $sessionMetadata.completed) {
         throw "The selected dataset is not a completed quick-refinement capture."
     }
     $capture = $latest.FullName -replace '\.qpsession\.json$', '.qpcap'
@@ -125,7 +131,16 @@ try {
     if ($null -eq $base) { throw 'The selected refinement base is missing, or no ordinary base model is available.' }
     Write-Host "Refinement base: tongue model v$($base.Version)"
 
-    $sizeOutput = @(& $python -c "import json,sys,torch; print(json.dumps([int(torch.load(p,map_location='cpu',weights_only=False)['imageSize']) for p in sys.argv[1:]]))" $base.Gate $base.Direction | Select-Object -Last 1)
+    $parentTemporaryRoot = Join-Path $PSScriptRoot ('training\tongue-parent-' + [guid]::NewGuid().ToString('N'))
+    $trainingGate = Join-Path $parentTemporaryRoot 'gate.pt'
+    $trainingDirection = Join-Path $parentTemporaryRoot 'direction.pt'
+    & $python .\lower_face_training.py unwrap $base.Gate --output $trainingGate
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the selected tongue parent. Original model kept.' }
+    & $python .\lower_face_training.py unwrap $base.Direction --output $trainingDirection
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read the selected direction parent. Original model kept.' }
+
+
+    $sizeOutput = @(& $python -c "import json,sys,torch; print(json.dumps([int(torch.load(p,map_location='cpu',weights_only=True)['imageSize']) for p in sys.argv[1:]]))" $base.Gate $base.Direction | Select-Object -Last 1)
     if ($LASTEXITCODE -ne 0 -or $sizeOutput.Count -eq 0) { throw 'Could not read the selected model input sizes.' }
     # Assign directly: Windows PowerShell 5.1 otherwise wraps a JSON array as
     # one nested item when ConvertFrom-Json is inside an array expression.
@@ -152,8 +167,11 @@ try {
             if ($_.Name -match '^qpro-stereo-tongue-v(?<v>\d+)(?:[.-]|$)') { [int]$Matches.v }
         })
     $version = ((@($base.Version) + $occupiedVersions | Measure-Object -Maximum).Maximum) + 1
-    $gateOutput = ".\models\qpro-stereo-tongue-v$version-gate.pt"
-    $directionOutput = ".\models\qpro-stereo-tongue-v$version-direction.pt"
+    $trainingRunRoot = Join-Path $PSScriptRoot ('training\lower-face-run-' + [guid]::NewGuid().ToString('N'))
+    $stagedModels = Join-Path $trainingRunRoot 'models'
+    New-Item -ItemType Directory -Path $stagedModels -Force | Out-Null
+    $gateOutput = Join-Path $stagedModels "qpro-stereo-tongue-v$version-gate.pt"
+    $directionOutput = Join-Path $stagedModels "qpro-stereo-tongue-v$version-direction.pt"
 
     $deviceOutput = @(& $python -c "import torch; from qpro_gpu import preferred_torch_device_name; print(preferred_torch_device_name(torch))" | Select-Object -Last 1)
     $deviceExitCode = $LASTEXITCODE
@@ -166,15 +184,37 @@ try {
     Write-Host "TRAIN_DEVICE device=$device batch=$effectiveBatchSize"
     if ($device -eq "cpu") { Write-Warning "CUDA is unavailable. CPU fallback is active; training can take substantially longer. NVIDIA users should rerun PC runtime setup after installing the current NVIDIA driver." }
 
-    Write-Host "TRAIN_STAGE index=1 total=2 name=visibility epochs=$Epochs device=$device"
-    & $python .\train_tongue_model.py $gateCache --architecture spatial-stereo-resnet-v2 --checkpoint-focus visibility --initial-checkpoint $base.Gate --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $gateOutput
+    $totalStages = if ($sessionMetadata.sessionType -eq 'lower-face-refinement-v1') { 3 } else { 2 }
+    Write-Host "TRAIN_STAGE index=1 total=$totalStages name=visibility epochs=$Epochs device=$device"
+    & $python .\train_tongue_model.py $gateCache --architecture spatial-stereo-resnet-v2 --checkpoint-focus visibility --initial-checkpoint $trainingGate --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $gateOutput
     if ($LASTEXITCODE -ne 0) { throw "Refining tongue visibility failed." }
-    Write-Host "TRAIN_STAGE index=2 total=2 name=direction epochs=$Epochs device=$device"
-    & $python .\train_tongue_model.py $directionCache --architecture spatial-stereo-resnet-v2 --checkpoint-focus direction --initial-checkpoint $base.Direction --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $directionOutput
+    Write-Host "TRAIN_STAGE index=2 total=$totalStages name=direction epochs=$Epochs device=$device"
+    & $python .\train_tongue_model.py $directionCache --architecture spatial-stereo-resnet-v2 --checkpoint-focus direction --initial-checkpoint $trainingDirection --learning-rate 0.00005 --epochs $Epochs --batch-size $effectiveBatchSize --device $device --output $directionOutput
     if ($LASTEXITCODE -ne 0) { throw "Refining tongue direction failed." }
+    if ($sessionMetadata.sessionType -eq 'lower-face-refinement-v1') {
+        Write-Host "TRAIN_STAGE index=3 total=3 name=cheeks device=$device"
+        & $python .\lower_face_training.py attach --session $latest.FullName --direction $directionOutput --root $trainingRunRoot --version $version --device $device
+        if ($LASTEXITCODE -ne 0) { throw 'Lower-face cheek training failed. Original parent model kept.' }
+    }
+    & $python .\lower_face_training.py publish --staged-root $trainingRunRoot --root $PSScriptRoot --version $version
+    if ($LASTEXITCODE -ne 0) { throw 'Publishing the trained lower-face model failed. Original model kept.' }
     Write-Host "MODEL_READY version=$version parent=$($base.Version)"
 }
 finally {
-    Restore-QproGpuVisibility
-    Pop-Location
+    try {
+        foreach ($temporaryRoot in @($parentTemporaryRoot, $trainingRunRoot)) {
+            if ($temporaryRoot -and (Test-Path -LiteralPath $temporaryRoot)) {
+                $resolvedTemporary = [System.IO.Path]::GetFullPath($temporaryRoot)
+                $allowedTraining = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'training')).TrimEnd('\') + '\'
+                if (-not $resolvedTemporary.StartsWith($allowedTraining, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe temporary training path.' }
+                Remove-Item -LiteralPath $resolvedTemporary -Recurse -Force
+            }
+        }
+    } finally {
+        Restore-QproGpuVisibility
+        foreach ($name in $qproSavedGpuEnvironment.Keys) {
+            [Environment]::SetEnvironmentVariable($name, $qproSavedGpuEnvironment[$name], 'Process')
+        }
+        Pop-Location
+    }
 }

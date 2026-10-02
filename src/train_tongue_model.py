@@ -28,6 +28,8 @@ from tongue_image_processing import (
 
 
 SIGNED_TARGETS = {"horizontal", "vertical", "twist"}
+CHEEK_TARGET_NAMES = ("cheekPuffLeft", "cheekPuffRight")
+CHEEK_ARCHITECTURE_PREFIX = "cheek-augmented-"
 
 
 def parent_checkpoint_metadata(path: str | Path | None) -> tuple[str | None, str | None]:
@@ -152,12 +154,17 @@ class StereoTongueModel(nn.Module):
         signed = [name in SIGNED_TARGETS for name in target_names]
         self.register_buffer("signed_mask", torch.tensor(signed, dtype=torch.bool))
 
-    def forward(self, cameras: torch.Tensor) -> torch.Tensor:
+    def stereo_features(self, cameras: torch.Tensor) -> torch.Tensor:
         left = self.encoder(cameras[:, 0:1])
         right = self.encoder(cameras[:, 1:2])
-        fused = torch.cat((left, right, torch.abs(left - right), left * right), dim=1)
-        logits = self.fusion(fused)
+        return torch.cat((left, right, torch.abs(left - right), left * right), dim=1)
+
+    def tongue_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        logits = self.fusion(features)
         return torch.where(self.signed_mask, torch.tanh(logits), torch.sigmoid(logits))
+
+    def forward(self, cameras: torch.Tensor) -> torch.Tensor:
+        return self.tongue_from_features(self.stereo_features(cameras))
 
 
 class ResidualBlock(nn.Module):
@@ -228,20 +235,112 @@ class SpatialStereoTongueModel(nn.Module):
         signed = [name in SIGNED_TARGETS for name in target_names]
         self.register_buffer("signed_mask", torch.tensor(signed, dtype=torch.bool))
 
-    def forward(self, cameras: torch.Tensor) -> torch.Tensor:
+    def stereo_features(self, cameras: torch.Tensor) -> torch.Tensor:
         left = self.encoder(cameras[:, 0:1])
         right = self.encoder(cameras[:, 1:2])
         stereo = torch.cat((left, right, torch.abs(left - right), left * right), dim=1)
         fused = self.stereo_fusion(stereo)
-        pooled = torch.cat((
+        return torch.cat((
             F.adaptive_avg_pool2d(fused, 1).flatten(1),
             F.adaptive_max_pool2d(fused, 1).flatten(1),
         ), dim=1)
-        logits = self.head(pooled)
+
+    def tongue_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        logits = self.head(features)
         return torch.where(self.signed_mask, torch.tanh(logits), torch.sigmoid(logits))
+
+    def forward(self, cameras: torch.Tensor) -> torch.Tensor:
+        return self.tongue_from_features(self.stereo_features(cameras))
+
+
+class FrozenTongueCheekModel(nn.Module):
+    """Add cheek regression without changing the trained tongue model.
+
+    The parent stays in evaluation mode even while its cheek head trains.
+    Freezing parameters alone would still update BatchNorm statistics and
+    enable Dropout, changing tongue output and the meaning of its features.
+    Both outputs share one stereo encoder pass during live inference.
+    """
+
+    def __init__(self, base_architecture: str, target_names: list[str]) -> None:
+        super().__init__()
+        if tuple(target_names[-2:]) != CHEEK_TARGET_NAMES or len(target_names) <= 2:
+            raise ValueError("Combined model needs the tongue targets followed by both cheek targets")
+        if any(name in CHEEK_TARGET_NAMES for name in target_names[:-2]):
+            raise ValueError("Combined model has duplicate cheek targets")
+        self.base_architecture = base_architecture
+        self.target_names = list(target_names)
+        self.parent = create_model(base_architecture, target_names[:-2])
+        if isinstance(self.parent, StereoTongueModel):
+            feature_count = 96 * 4
+        elif isinstance(self.parent, SpatialStereoTongueModel):
+            feature_count = 256 * 2
+        else:
+            raise ValueError("Only a plain tongue checkpoint can be the frozen parent")
+        self.parent.requires_grad_(False)
+        self.parent.eval()
+        # A trained tongue encoder has unequal feature scales. Feeding them
+        # directly to a new cheek head can saturate its sigmoid and produce a
+        # constant zero output. These fixed training-set statistics affect
+        # only the cheek branch; they never normalize the parent's input.
+        self.register_buffer("cheek_feature_mean", torch.zeros(feature_count))
+        self.register_buffer("cheek_feature_scale", torch.ones(feature_count))
+        self.cheek_head = nn.Sequential(
+            nn.Linear(feature_count, 128), nn.SiLU(), nn.Linear(128, 2), nn.Sigmoid(),
+        )
+
+    def train(self, mode: bool = True) -> "FrozenTongueCheekModel":
+        super().train(mode)
+        self.parent.eval()
+        return self
+
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        # The first private cheek experiment predates feature normalization.
+        # Identity statistics retain its original inference behavior; never
+        # infer statistics from live frames or a validation capture.
+        if "cheek_feature_mean" not in state_dict and "cheek_feature_scale" not in state_dict:
+            state_dict = dict(state_dict)
+            state_dict["cheek_feature_mean"] = torch.zeros_like(self.cheek_feature_mean)
+            state_dict["cheek_feature_scale"] = torch.ones_like(self.cheek_feature_scale)
+        result = super().load_state_dict(state_dict, strict=strict, assign=assign)
+        if not torch.isfinite(self.cheek_feature_mean).all() or \
+                not torch.isfinite(self.cheek_feature_scale).all() or \
+                not torch.all(self.cheek_feature_scale > 0):
+            raise ValueError("Cheek feature normalization must be finite with positive scales")
+        return result
+
+    def fit_cheek_feature_normalization(self, features: torch.Tensor) -> None:
+        if features.ndim != 2 or features.shape[1] != len(self.cheek_feature_mean) or \
+                len(features) < 2 or not torch.isfinite(features).all():
+            raise ValueError("Cheek normalization needs finite training features with the expected width")
+        with torch.no_grad():
+            self.cheek_feature_mean.copy_(features.mean(0).to(self.cheek_feature_mean.device))
+            # Avoid amplifying a nearly constant feature or a sensor-noise-only
+            # dimension while preserving meaningful variation in the capture.
+            self.cheek_feature_scale.copy_(
+                features.std(0, correction=0).clamp_min(.01).to(self.cheek_feature_scale.device),
+            )
+
+    def cheek_logits_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        normalized = (features - self.cheek_feature_mean) / self.cheek_feature_scale
+        values = self.cheek_head[1](self.cheek_head[0](normalized))
+        return self.cheek_head[2](values)
+
+    def cheeks_from_features(self, features: torch.Tensor) -> torch.Tensor:
+        return self.cheek_head[3](self.cheek_logits_from_features(features))
+
+    def forward(self, cameras: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            features = self.parent.stereo_features(cameras)
+            tongue = self.parent.tongue_from_features(features)
+        return torch.cat((tongue, self.cheeks_from_features(features)), dim=1)
 
 
 def create_model(architecture: str, target_names: list[str]) -> nn.Module:
+    if architecture.startswith(CHEEK_ARCHITECTURE_PREFIX):
+        return FrozenTongueCheekModel(
+            architecture[len(CHEEK_ARCHITECTURE_PREFIX):], target_names,
+        )
     if architecture == "legacy-late-fusion-v1":
         return StereoTongueModel(target_names)
     if architecture == "spatial-stereo-resnet-v2":
