@@ -158,10 +158,11 @@ Turn **Individual cheek puff** off to use the original cheek values from Virtual
 2. On **Live tracking**, press **Calibrate cheek puff**. Confirm that the window says **Live cheek feed is ready**.
 3. Relax both cheeks, press **Capture relaxed cheeks**, and hold still for three seconds.
 4. Puff only your own left cheek, keeping the right relaxed. Press **Capture left cheek** and hold for three seconds. Relax briefly afterward.
-5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds. Relax briefly afterward.
-6. Puff both cheeks together, press **Capture both cheeks**, and hold for three seconds.
+5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds.
 
-The window saves your profile after all four poses pass, then selects **Calibrated** and turns **Individual cheek puff** on. Keep your jaw comfortable and avoid smiling during the holds. The window reads the original cheek signals, so both numbers can rise during a one-cheek puff. Calibration measures that overlap. If a pose is too weak, too noisy, or cannot be distinguished from the other side, follow the message and repeat that step. A paused or mismatched feed must be fixed before you continue. If the window reports an older calibration feed, close VRCFaceTracking, install the matching Qpro module from this build, and reopen VRCFaceTracking before trying again. Closing the window before completion keeps any existing profile.
+The window saves your profile after all three poses pass, then selects **Calibrated** and turns **Individual cheek puff** on. Keep your jaw comfortable and avoid smiling during the holds. This restores the earlier calibration using the module's Balanced cheek strengths. If a pose is too weak, unstable, or shows both cheeks together, follow the message and repeat that step. A paused or mismatched feed must be fixed before you continue. Closing the window before completion keeps any existing profile.
+
+**Updating from the four-pose test:** Close VRCFaceTracking, install the matching Qpro module from this build, then reopen it. Earlier three-pose profiles still work. Four-pose profiles stay saved but are not used by this version; **Calibrated** uses the bundled developer baseline until you complete a new three-pose calibration. You can wait until you have the headset available.
 
 Virtual Desktop and Steam Link have separate personal profiles. Calibrate each streaming app you use; switching back uses that app's saved profile. This is a short cheek calibration, so you do not need to record or retrain your tongue model.
 
