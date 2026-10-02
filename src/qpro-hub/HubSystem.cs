@@ -148,10 +148,11 @@ internal sealed partial class HubForm
         var sessionEditable = !running && !_stopping && !_starting;
         _gaze.Enabled = sessionEditable;
         _tongue.Enabled = sessionEditable;
-        _cameraCheekPuff.Enabled = sessionEditable;
         _pupil.Enabled = sessionEditable;
         _eyeProfiles.Enabled = _gaze.Checked && sessionEditable;
-        _tongueModels.Enabled = (_tongue.Checked || _cameraCheekPuff.Checked) && sessionEditable;
+        // Model selection precedes the opt-in output switches. It must remain
+        // usable when all camera features are off on a fresh Hub launch.
+        _tongueModels.Enabled = sessionEditable;
         _fps.Enabled = (_tongue.Checked || _cameraCheekPuff.Checked || _pupil.Checked) && sessionEditable;
         _pupilSensitivity.Enabled = _pupil.Checked && sessionEditable;
         _cameraPreview.Enabled = sessionEditable;
@@ -178,6 +179,7 @@ internal sealed partial class HubForm
         _stop.Enabled = (running || _starting) && !_stopping;
         StyleRunButton(_start, canStart);
         StyleRunButton(_stop, (running || _starting) && !_stopping);
+        UpdateCameraCheekAvailability();
     }
 
     private async void OnClosing(object? sender, FormClosingEventArgs e)

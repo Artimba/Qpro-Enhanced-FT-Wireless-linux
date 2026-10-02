@@ -26,6 +26,7 @@ internal sealed partial class HubForm : Form
     private readonly CheckBox _cameraPreview = FeatureToggle("Preview tracking cameras", true);
     private readonly CheckBox _individualCheekPuff = FeatureToggle("Individual cheek puff", true);
     private readonly CheckBox _cameraCheekPuff = FeatureToggle("Camera cheek puff (experimental)", false);
+    private readonly Label _cameraCheekSourceNote = new() { AutoSize = true, ForeColor = Muted, Tag = "responsive-info" };
     private readonly ComboBox _cheekCameraDatasets = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly ComboBox _cheekCameraBaseModels = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
     private readonly Label _cheekCameraDatasetNote = new() { AutoSize = true, ForeColor = Muted, Tag = "responsive-info" };
@@ -171,7 +172,7 @@ internal sealed partial class HubForm : Form
             UpdateControlState();
         };
         _tongue.CheckedChanged += (_, _) => UpdateControlState();
-        _cameraCheekPuff.CheckedChanged += (_, _) => { UpdateToggleStyle(_cameraCheekPuff); UpdateControlState(); };
+        _cameraCheekPuff.CheckedChanged += (_, _) => { UpdateToggleStyle(_cameraCheekPuff); UpdateTongueModelNote(); UpdateControlState(); };
         _pupil.CheckedChanged += (_, _) => UpdateControlState();
         _cameraPreview.CheckedChanged += (_, _) =>
         {

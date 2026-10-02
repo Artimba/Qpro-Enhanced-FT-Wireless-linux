@@ -6,8 +6,20 @@ namespace QproFaceTracking.Hub;
 internal sealed partial class HubForm
 {
     private bool SelectedModelHasCameraCheeks() => _tongueModels.SelectedItem is FileChoice model &&
-        ReadModelMetadata(VersionFromPath(model.Primary))?["hasCameraCheeks"] is JsonValue flag &&
-        flag.TryGetValue<bool>(out var enabled) && enabled;
+        HubModelMetadata.HasCameraCheeks(ReadModelMetadata(VersionFromPath(model.Primary)));
+
+    private void UpdateCameraCheekAvailability()
+    {
+        bool running = _trackingProcesses.Any(process => !process.HasExited);
+        bool editable = !running && !_starting && !_stopping;
+        bool available = SelectedModelHasCameraCheeks();
+        // A stale checked choice stays editable so it can be turned off after
+        // selecting a tongue-only model. Never enable an experimental output.
+        _cameraCheekPuff.Enabled = editable && (available || _cameraCheekPuff.Checked);
+        _cameraCheekSourceNote.Text = HubCameraTrackingLaunch.DescribeCheekSource(
+            available, _cameraCheekPuff.Checked, running);
+        _cameraCheekSourceNote.ForeColor = _cameraCheekPuff.Checked && !available ? Warning : Muted;
+    }
 
     private void ReloadCameraCheekWorkflow()
     {

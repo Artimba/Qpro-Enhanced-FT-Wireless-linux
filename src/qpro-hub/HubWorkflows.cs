@@ -143,6 +143,7 @@ internal sealed partial class HubForm
         _tongueModelNote.Text += " Stop tracking before changing models, then press Start tracking to load the selection.";
         if (SelectedModelHasCameraCheeks())
             _tongueModelNote.Text += " This experimental copy also has camera cheek puff outputs; enable Camera cheek puff separately to use them.";
+        UpdateCameraCheekAvailability();
     }
 
     private async Task ConfirmCaptureAsync(TongueDatasetKind kind)
@@ -605,23 +606,19 @@ internal sealed partial class HubForm
                     await DisableFailedGazeAsync("The independent-gaze process exited during startup. See Activity.");
             }
             startCancellation.Token.ThrowIfCancellationRequested();
-            if (_tongue.Checked || _cameraCheekPuff.Checked)
+            FileChoice? lowerFaceModel = _tongueModels.SelectedItem as FileChoice;
+            var cameraPlan = HubCameraTrackingLaunch.Create(new(
+                _environment.TrackingSourceArgument, _tongue.Checked, _cameraCheekPuff.Checked,
+                SelectedModelHasCameraCheeks(), lowerFaceModel?.Primary, lowerFaceModel?.Secondary,
+                _fps.SelectedItem?.ToString() ?? "24", _smoothing.Value, VisibilityModeValue(),
+                _pupil.Checked, PupilSensitivityValue(), _cameraPreview.Checked, _stopFile));
+            if (cameraPlan.Required)
             {
-                var model = (FileChoice)_tongueModels.SelectedItem!;
-                AppendLog($"Lower-face model selected for this session: v{VersionFromPath(model.Primary)} (gate: {Path.GetFileName(model.Primary)}; direction: {Path.GetFileName(model.Secondary)}).");
-                var args = new List<string> { "-TrackingSource", _environment.TrackingSourceArgument, "-TonguePreview", "-MaxFps", (_fps.SelectedItem?.ToString() ?? "24"), "-TongueSmoothing", _smoothing.Value.ToString(), "-TongueVisibilityMode", VisibilityModeValue(), "-TongueModelPath", model.Primary, "-TongueDirectionModelPath", model.Secondary! };
-                if (_tongue.Checked) args.Add("-EnableTongueOutput");
-                if (_cameraCheekPuff.Checked) args.Add("-EnableCheekOutput");
-                if (!_cameraPreview.Checked) args.Add("-NoWindow");
-                if (_pupil.Checked) args.AddRange(["-PupilOutput", "-PupilSensitivity", PupilSensitivityValue()]);
-                args.AddRange(["-StopFile", _stopFile]);
-                StartManaged("Camera tracking", "build-and-run.ps1", args.ToArray());
-            }
-            else if (_pupil.Checked)
-            {
-                var args = new List<string> { "-TrackingSource", _environment.TrackingSourceArgument, "-PupilOutput", "-PupilSensitivity", PupilSensitivityValue(), "-MaxFps", (_fps.SelectedItem?.ToString() ?? "24"), "-StopFile", _stopFile };
-                if (!_cameraPreview.Checked) args.Add("-NoWindow");
-                StartManaged("Pupil tracking", "build-and-run.ps1", args.ToArray());
+                if ((_tongue.Checked || _cameraCheekPuff.Checked) && lowerFaceModel is not null)
+                    AppendLog($"Lower-face model selected for this session: v{VersionFromPath(lowerFaceModel.Primary)} (gate: {Path.GetFileName(lowerFaceModel.Primary)}; direction: {Path.GetFileName(lowerFaceModel.Secondary)}).");
+                AppendLog("Camera outputs for this session: " + cameraPlan.OutputDescription);
+                StartManaged(_tongue.Checked || _cameraCheekPuff.Checked ? "Camera tracking" : "Pupil tracking",
+                    "build-and-run.ps1", cameraPlan.Arguments);
             }
             if (!_gazeFailureHandled)
             {
