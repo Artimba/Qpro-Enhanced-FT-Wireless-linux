@@ -115,9 +115,9 @@ internal sealed partial class HubForm
         }
 
         var livePage = NewPage();
-        var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 6, Padding = Padding.Empty, Margin = Padding.Empty };
+        var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 4, Padding = Padding.Empty, Margin = Padding.Empty };
         liveLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var row = 0; row < 6; row++) liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (var row = 0; row < 4; row++) liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         livePage.Controls.Add(liveLayout);
         var liveFieldTables = new List<TableLayoutPanel>();
         void LiveRows(TableLayoutPanel card, int row)
@@ -235,6 +235,19 @@ internal sealed partial class HubForm
         Details(liveSource, connectionDetails, "connection details", 3);
         liveLayout.Controls.Add(liveSource);
 
+        var eyesCard = LiveFields();
+        Span(eyesCard, SectionTitle("Eyes"), 0);
+        Span(eyesCard, _gaze, 1);
+        LiveField(eyesCard, 2, "Eye profile", _eyeProfiles);
+        Span(eyesCard, Info("Keep independent gaze off while the Magisk gaze module is active. The Hub's method briefly freezes the headset while restarting tracking; wait for Activity to confirm it is ready."), 3);
+        Span(eyesCard, _pupil, 4);
+        LiveField(eyesCard, 5, "Pupil response", _pupilSensitivity);
+        Span(eyesCard, Info("Look straight and hold steady until both eyes finish warming up. Processing status is shown under Session. Shared FPS and preview controls are under Lower-face tracking > Show camera settings."), 6);
+        Span(eyesCard, _eyebrowBoost, 7);
+        LiveField(eyesCard, 8, "Eyebrow sensitivity", _eyebrowSensitivity);
+        Span(eyesCard, Info("Eyebrow sensitivity adjusts the streaming app's existing brow movement from 0.50× to 3.00×. Changes apply immediately through the Qpro module. Turn the adjustment off to use native values."), 9);
+        liveLayout.Controls.Add(eyesCard);
+
         var lowerFace = LiveFields();
         Span(lowerFace, SectionTitle("Lower-face tracking"), 0);
         LiveField(lowerFace, 1, "Lower-face model", _tongueModels);
@@ -255,30 +268,7 @@ internal sealed partial class HubForm
         Span(cameraSettings, _cameraPreview, 3);
         Span(cameraSettings, Info("FPS cap and camera preview also apply to pupil tracking. Hiding the preview keeps tracking active. Changes apply the next time tracking starts."), 4);
         Details(lowerFace, cameraSettings, "camera settings", 7);
-        liveLayout.Controls.Add(lowerFace);
-
-        var pupilCard = LiveFields();
-        Span(pupilCard, SectionTitle("Pupil dilation"), 0);
-        Span(pupilCard, _pupil, 1);
-        LiveField(pupilCard, 2, "Pupil response", _pupilSensitivity);
-        Span(pupilCard, Info("Look straight and hold steady until both eyes finish warming up. Processing status is shown under Session."), 3);
-        liveLayout.Controls.Add(pupilCard);
-
-        var gazeCard = LiveFields();
-        Span(gazeCard, SectionTitle("Independent eye gaze"), 0);
-        Span(gazeCard, _gaze, 1);
-        LiveField(gazeCard, 2, "Eye profile", _eyeProfiles);
-        Span(gazeCard, Info("Keep this off while the Magisk gaze module is active. The Hub's gaze method briefly freezes the headset while restarting tracking; wait for Activity to confirm it is ready."), 3);
-        liveLayout.Controls.Add(gazeCard);
-
-        var nativeCard = LiveFields();
-        Span(nativeCard, SectionTitle("Native face adjustments"), 0);
-        Span(nativeCard, Info("Adjust the streaming app's cheek and eyebrow values. Changes update immediately through the Qpro module. Camera cheek strengths bypass the native puff style and calibration."), 1);
-        var nativeSettings = LiveFields();
-        nativeSettings.BackColor = Inset;
-        nativeSettings.Padding = new Padding(8);
-        nativeSettings.Margin = new Padding(0, 2, 0, 4);
-        Span(nativeSettings, _individualCheekPuff, 0);
+        Span(lowerFace, _individualCheekPuff, 9);
         var cheekPuffActions = new FlowLayoutPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill,
             WrapContents = true, Margin = Padding.Empty };
         var cheekPuffSelector = new Panel { Margin = Padding.Empty };
@@ -287,8 +277,8 @@ internal sealed partial class HubForm
         cheekPuffSelector.Controls.Add(_cheekPuffStyle);
         cheekPuffActions.Controls.Add(cheekPuffSelector);
         cheekPuffActions.Controls.Add(_calibrateCheekPuff);
-        LiveField(nativeSettings, 1, "Cheek puff style", cheekPuffActions);
-        var cheekPuffLabel = (Label)nativeSettings.GetControlFromPosition(0, 1)!;
+        LiveField(lowerFace, 10, "Cheek puff style", cheekPuffActions);
+        var cheekPuffLabel = (Label)lowerFace.GetControlFromPosition(0, 10)!;
         // This row can wrap its button below the selector. Keep the caption
         // aligned with the selector, rather than the combined wrapped height.
         cheekPuffLabel.Dock = DockStyle.None;
@@ -303,18 +293,16 @@ internal sealed partial class HubForm
             cheekPuffLabel.Height = lineHeight + 8;
         }
         FitCheekActions();
-        Span(nativeSettings, _individualCheekSuck, 2);
-        LiveField(nativeSettings, 3, "Cheek suck style", _cheekSuckStyle);
-        Span(nativeSettings, _eyebrowBoost, 4);
-        LiveField(nativeSettings, 5, "Eyebrow sensitivity", _eyebrowSensitivity);
-        var nativeHelp = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        Span(lowerFace, _individualCheekSuck, 11);
+        LiveField(lowerFace, 12, "Cheek suck style", _cheekSuckStyle);
+        Span(lowerFace, Info("Cheek adjustments update immediately through the Qpro module. Camera cheek strengths bypass the native puff style and calibration. Turn an adjustment off to use native values when camera cheeks are inactive."), 13);
+        var cheekHelp = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1, Margin = Padding.Empty };
-        LiveRows(nativeHelp, 1);
-        nativeHelp.Controls.Add(Info("Cheek puff: Calibrated gives a smooth relaxed-to-full response, using the developer baseline until you calibrate. Calibrate with the current streaming app's Qpro module running. 1/0 selects a full-strength cheek; Balanced is gentler."));
-        nativeHelp.Controls.Add(Info("Cheek suck: Strong selects the leading side; Balanced is gentler. Eyebrow sensitivity ranges from 0.50× to 3.00×. Turn each adjustment off for native values. Gaze and blinks stay unchanged."));
-        Details(nativeSettings, nativeHelp, "native adjustment details", 6);
-        Details(nativeCard, nativeSettings, "cheek and eyebrow controls", 2);
-        liveLayout.Controls.Add(nativeCard);
+        LiveRows(cheekHelp, 1);
+        cheekHelp.Controls.Add(Info("Cheek puff: Calibrated gives a smooth relaxed-to-full response, using the developer baseline until you calibrate. Calibrate with the current streaming app's Qpro module running. 1/0 selects a full-strength cheek; Balanced is gentler."));
+        cheekHelp.Controls.Add(Info("Cheek suck: Strong selects the leading side; Balanced is gentler. These controls adjust the existing streaming-app values; camera cheek training uses its own recorded poses."));
+        Details(lowerFace, cheekHelp, "cheek adjustment details", 14);
+        liveLayout.Controls.Add(lowerFace);
 
         var handsCard = LiveFields();
         Span(handsCard, SectionTitle("Hands and controllers"), 0);
@@ -799,7 +787,7 @@ internal sealed partial class HubForm
                     TextRenderer.MeasureText("Eyebrow sensitivity", Font).Width + Px(24));
                 foreach (var card in liveFieldTables)
                 {
-                    var inset = card == cameraSettings || card == nativeSettings ? card.Padding.Left : 0;
+                    var inset = card == cameraSettings ? card.Padding.Left : 0;
                     card.ColumnStyles[0].Width = fieldWidth - inset;
                 }
                 foreach (var page in pageList) FitPageWidth(page);

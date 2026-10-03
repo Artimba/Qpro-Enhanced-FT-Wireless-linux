@@ -241,10 +241,10 @@ def story_from_guide(markdown: str):
 
     story.extend([
         Spacer(1, 9),
-        Paragraph("Tested PC example", H2),
+        Paragraph("Tested PC example", H3),
         Paragraph("The owner reported good performance with few issues on Windows 11 Pro, "
                   "an Intel Core i7-13700KF, AMD Radeon RX 7900 XTX, and 32 GB RAM. "
-                  "This is an experience report, not a benchmark or a guarantee for other PCs.", BODY),
+                  "This is an experience report, not a benchmark or a guarantee for other PCs.", SMALL),
     ])
     return story
 

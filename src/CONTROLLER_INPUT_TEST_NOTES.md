@@ -20,6 +20,9 @@ default. It is a **test build**, not a validated hardware release.
 - Kept the Hub's existing visual style. Grouped wireless pairing and standalone
   cheek-camera training into expandable sections, aligned the new fields and
   improved disabled toggle readability.
+- Grouped Live tracking into **Eyes** (gaze, pupils and eyebrows), **Lower-face
+  tracking** (tongue and cheek controls), and **Hands and controllers** at the
+  bottom. Cheek response and calibration controls are directly visible.
 - Updated the bundled PDF and text instructions to match the visible controls.
 
 ## Compatibility and test limits
@@ -34,7 +37,7 @@ is not admitted by this prototype. Unknown builds are refused.
 Builds and offline checks passed: 12 fake hand lifecycle checks, synthetic
 adapter ABI/skeleton/restore checks, 45 native packet/contact/settings checks,
 11 fake-page/lifetime checks, 8 optional-component checks, and a functional
-Windows PowerShell/native-child EOF cleanup check. There were 1,861 private UI
+Windows PowerShell/native-child EOF cleanup check. There were 2,782 private UI
 layout/state checks across narrow, standard and wide Windows fixtures.
 
 These checks do not establish live headset behaviour. Before a release, verify

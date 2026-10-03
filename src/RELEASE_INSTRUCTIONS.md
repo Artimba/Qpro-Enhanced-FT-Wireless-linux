@@ -145,7 +145,7 @@ To remove a recording you no longer need, stay on **Personalize**. Under its mat
 ## 7. Start tracking
 
 1. Start your selected **Virtual Desktop** or **Steam Link** app on the Quest, then SteamVR and VRCFaceTracking on the PC. Steam Link users should confirm its OSC and eye/face sharing settings above.
-2. In the Hub, open **Live tracking**. Independent Eye Gaze starts off; select it, tongue tracking, pupil dilation, or the combination you want. **If you installed Singularity's Independent Eye Gaze Magisk module, leave the Hub's Independent Eye Gaze option off.** For tongue tracking, choose the **new model you just trained** under **Lower-face model**. If tracking is already running, press **Stop tracking** first so the new model loads when tracking restarts.
+2. In the Hub, open **Live tracking**. The **Eyes** section contains independent gaze, pupil dilation and eyebrow movement. Independent Eye Gaze starts off. **If you installed Singularity's Independent Eye Gaze Magisk module, leave the Hub's Independent Eye Gaze option off.** In **Lower-face tracking**, choose the **new model you just trained** under **Lower-face model** and enable the camera features you want. Its cheek controls are in the same section. Optional **Hands and controllers** controls are at the bottom. If tracking is already running, press **Stop tracking** first so the new model loads when tracking restarts.
 3. Press **Start tracking**. Open **Activity** if you want to see whether the camera connected and which device is running the tongue model.
 4. When you finish, press **Stop tracking**. Wait until Activity confirms that the live processes have stopped. If you used the Hub's gaze method, also wait for its gaze recovery result: it restores the headset eye-model state recorded before that Qpro session.
 
@@ -164,7 +164,7 @@ Use **Check gaze setup** in **First-time setup** to read the headset's current e
 If either recovery action refuses to proceed, keep its **Activity** error and ask for help with the exact firmware build. Recovery does not add support for an unsupported eye-tracking engine.
 
 
-In **Lower-face tracking**, open **Show camera settings** to find **Preview tracking cameras**, **FPS cap**, **Motion smoothing** and **Tongue visibility**. Hiding the camera windows does not turn tracking off. Change preview visibility before starting the next session. **Pupil response**, in the **Pupil dilation** section, makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
+In **Lower-face tracking**, open **Show camera settings** to find **Preview tracking cameras**, **FPS cap**, **Motion smoothing** and **Tongue visibility**. Hiding the camera windows does not turn tracking off. Change preview visibility before starting the next session. **Pupil response**, in the **Eyes** section, makes avatar pupil changes stronger or weaker; start near the default and adjust slowly. Pupil values are estimates for avatar animation, **not** measured eye health data. Your VRChat avatar must support pupil animation for changes to appear.
 
 ### Pupil processing and performance
 
@@ -174,7 +174,7 @@ Qpro processes the latest eye pair instead of queuing old frames. Activity repor
 
 ### Choose your cheek puff response
 
-On **Live tracking**, open **Native face adjustments > Show cheek and eyebrow controls**. **Individual cheek puff** starts on with **1/0** selected. These controls adjust cheek puff from your streaming app when **Camera cheek puff (experimental)** is off or its output stops. Choose a **Cheek puff style**:
+On **Live tracking**, find the cheek controls in **Lower-face tracking**. **Individual cheek puff** starts on with **1/0** selected. These controls adjust cheek puff from your streaming app when **Camera cheek puff (experimental)** is off or its output stops. Choose a **Cheek puff style**:
 
 - **Calibrated:** a smooth strength from relaxed to full puff, including values between 0 and 1. It uses your personal calibration for the selected streaming app, or the bundled developer cheek baseline until you make one. Separate developer baselines were measured on one Quest Pro through Virtual Desktop and Steam Link. They are a starting point; calibrate for your own face if the response is too weak or too strong.
 - **1/0:** a clear one-cheek puff becomes full strength on that side and zero on the other. Puffing both cheeks still moves both.
@@ -185,7 +185,7 @@ With camera cheek output off, turn **Individual cheek puff** off to use the orig
 ### Calibrate cheek puff for your face
 
 1. Keep the headset on and your chosen streaming app connected. Its matching Qpro module must be installed and tracking in VRCFaceTracking. **Qpro camera tracking does not need to be running.**
-2. On **Live tracking**, open **Native face adjustments > Show cheek and eyebrow controls** and press **Calibrate cheek puff**. Confirm that the window says **Live cheek feed is ready**.
+2. On **Live tracking > Lower-face tracking**, press **Calibrate cheek puff** beside **Cheek puff style**. Confirm that the window says **Live cheek feed is ready**.
 3. Relax both cheeks, press **Capture relaxed cheeks**, and hold still for three seconds.
 4. Puff only your own left cheek, keeping the right relaxed. Press **Capture left cheek** and hold for three seconds. Relax briefly afterward.
 5. Puff only your own right cheek, keeping the left relaxed. Press **Capture right cheek** and hold for three seconds.
@@ -198,7 +198,7 @@ Virtual Desktop and Steam Link have separate personal profiles. Calibrate each s
 
 **Individual cheek suck** uses the separate left and right cheek-suck signals from Virtual Desktop or Steam Link. It starts on with **Strong individual (1/0)**, which emphasizes the stronger side while leaving a deliberate two-cheek suck on both sides. Choose **Balanced** for a softer effect, or turn it off to pass through the streaming app's original values. It does not use negative cheek-puff values.
 
-**Adjust eyebrow movement** starts off, so brows use the selected source's original values. Turn it on and adjust **Eyebrow sensitivity** to amplify or soften the existing left and right inner raise, outer raise, and lower/pinch expressions. This cannot add movements the headset does not detect. The avatar needs matching brow parameters and blendshapes to show that detail. If the expressions move in VRCFaceTracking's preview but the avatar shows only a single brow motion, check the avatar's face tracking setup.
+In **Live tracking > Eyes**, **Adjust eyebrow movement** starts off, so brows use the selected source's original values. Turn it on and adjust **Eyebrow sensitivity** to amplify or soften the existing left and right inner raise, outer raise, and lower/pinch expressions. This cannot add movements the headset does not detect. The avatar needs matching brow parameters and blendshapes to show that detail. If the expressions move in VRCFaceTracking's preview but the avatar shows only a single brow motion, check the avatar's face tracking setup.
 
 Smirk handling is built into both Qpro modules. A clear one-sided smile emphasizes its leading corner and suppresses the weaker side; an even smile still moves both sides. There is no separate smirk toggle in the Hub.
 
