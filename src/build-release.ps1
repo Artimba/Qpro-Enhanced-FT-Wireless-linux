@@ -137,6 +137,8 @@ $runtimeFiles = @(
     "runtime-python.ps1",
     "prepare-eye-model.ps1",
     "prepare_eye_model.py",
+    "qpro_eye_engines.py",
+    "eye_detector_guard.py",
     "train-latest-tongue-stills.ps1",
     "train-latest-tongue-refinement.ps1",
     "requirements-runtime.txt",

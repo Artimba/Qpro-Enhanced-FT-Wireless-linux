@@ -22,39 +22,16 @@ import numpy as np
 
 from native_eye_probe import gaze_panel, put_text, summary
 from native_eye_pupil_probe import KernelToPcMonotonicClock
+from eye_detector_guard import DetectorCallGuard
+from qpro_eye_engines import (
+    ENGINE_PROFILES, ENTRY_ARGUMENTS, EngineProbeProfile, select_engine_profile,
+)
 
 
 ENGINE_PATH = "/odm/lib64/libtrackingengines.so"
 TRACE_ROOT = "/sys/kernel/tracing"
 TRACE_INSTANCE = "qpro_raw_eye"
 TRACE_GROUP = "qpro_raw_eye"
-
-@dataclass(frozen=True)
-class EngineProbeProfile:
-    size: int
-    offset: int
-    arguments: str
-    sha256: str | None = None
-
-
-# The first profile is the previously supported 51483620027600340 engine.
-# The second is 51503870024400340. Its hook is after the detector has stored
-# the three visual-axis floats in EyeData; x19 still points to that EyeData.
-ENGINE_PROFILES = (
-    EngineProbeProfile(
-        47_724_232,
-        0xB63FE4,
-        "x=+0x30(%sp):x32 y=+0x34(%sp):x32 z=+0x38(%sp):x32 "
-        "tag=+0x0(%x19):x32",
-    ),
-    EngineProbeProfile(
-        47_418_280,
-        0xB1F3E8,
-        "x=+0x300(%x19):x32 y=+0x304(%x19):x32 z=+0x308(%x19):x32 "
-        "tag=+0x0(%x19):x32",
-        "0fb6f54a3e190bec791d757ea18d32a8ecc1af4a861992d04b1703c93293cd03",
-    ),
-)
 
 TRACE_SAMPLE = re.compile(
     r"(?P<time>\d+\.\d+): qpro_(?P<eye>left|right): .*?"
@@ -69,7 +46,7 @@ PREMERGE_SAMPLE = re.compile(
     r"bz=0x(?P<bz>[0-9a-fA-F]+) bv=(?P<bv>\d+)"
 )
 DETECTOR_SAMPLE = re.compile(
-    r"(?P<time>\d+\.\d+): detector_output: .*?"
+    r"(?P<time>\d+\.\d+): (?:qpro_raw_eye:)?detector_output: .*?"
     r"x=0x(?P<x>[0-9a-fA-F]+) y=0x(?P<y>[0-9a-fA-F]+) "
     r"z=0x(?P<z>[0-9a-fA-F]+) tag=0x(?P<tag>[0-9a-fA-F]+)"
 )
@@ -206,12 +183,21 @@ class PreMergeParser:
 class DetectorOutputParser:
     """Pair tag-0/tag-1 outputs computed by VisualAxisDetector."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, guarded: bool = False) -> None:
         self._pending: dict[int, tuple[float, tuple[float, float, float]]] = {}
+        self._guard = DetectorCallGuard() if guarded else None
 
     def parse(self, line: str, pc_monotonic_ns: int) -> RawEyeSample | None:
+        if self._guard is not None:
+            accepted = self._guard.observe(line)
+            if accepted is not True:
+                if accepted is False or ("LOST" in line and "EVENT" in line):
+                    self._pending.clear()
+                return None
         match = DETECTOR_SAMPLE.search(line)
         if not match:
+            if "detector_output:" in line or ("LOST" in line and "EVENT" in line):
+                self._pending.clear()
             return None
         eye = int(match.group("tag"), 16) & 0xFF
         if eye not in (0, 1):
@@ -220,6 +206,9 @@ class DetectorOutputParser:
         vector = tuple(
             float_from_trace_hex(match.group(axis)) for axis in ("x", "y", "z")
         )
+        if not all(math.isfinite(value) for value in vector) or not any(vector):
+            self._pending.clear()
+            return None
         self._pending[eye] = (kernel_time, vector)  # type: ignore[assignment]
         if 0 not in self._pending or 1 not in self._pending:
             return None
@@ -264,10 +253,13 @@ class PersistentAdbRootShell:
         )
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
-        ready = self.run("id", timeout=8.0)
-        if "uid=0(root)" not in ready.stdout:
+        try:
+            ready = self.run("id", timeout=8.0)
+            if "uid=0(root)" not in ready.stdout:
+                raise RuntimeError("Magisk did not provide an interactive root shell")
+        except Exception:
             self.close()
-            raise RuntimeError("Magisk did not provide an interactive root shell")
+            raise
 
     def _read(self) -> None:
         assert self._process.stdout is not None
@@ -391,7 +383,7 @@ class RawTraceEyeReader:
             return
         instance = self.instance_path
         self._adb_root(f"echo 0 '>' {instance}/tracing_on", check=False)
-        for name in ("detector_output", "qpro_inputs", "qpro_left", "qpro_right"):
+        for name in ("detector_entry", "detector_output", "qpro_inputs", "qpro_left", "qpro_right"):
             self._adb_root(
                 f"echo 0 '>' {instance}/events/{TRACE_GROUP}/{name}/enable",
                 check=False,
@@ -435,6 +427,17 @@ class RawTraceEyeReader:
             )
         self._configured = False
 
+    def _resolve_engine_profile(self) -> EngineProbeProfile:
+        size_result = self._adb_root(f"stat -c %s {ENGINE_PATH}")
+        try:
+            engine_size = int(size_result.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError) as error:
+            raise RuntimeError("Could not verify the headset tracking-engine build") from error
+        hash_result = self._adb_root(f"sha256sum {ENGINE_PATH}")
+        hash_fields = hash_result.stdout.strip().split()
+        actual_hash = hash_fields[0].lower() if hash_fields else ""
+        return select_engine_profile(engine_size, actual_hash)
+
     def start(self) -> None:
         state = subprocess.run(
             [self.adb, "get-state"], stdout=subprocess.PIPE,
@@ -444,30 +447,24 @@ class RawTraceEyeReader:
         if state.returncode != 0 or state.stdout.strip() != "device":
             raise RuntimeError("No authorized Quest was found over ADB")
         self._root_shell = PersistentAdbRootShell(self.adb)
-        size_result = self._adb_root(f"stat -c %s {ENGINE_PATH}")
         try:
-            engine_size = int(size_result.stdout.strip().splitlines()[-1])
-        except (ValueError, IndexError) as error:
-            raise RuntimeError("Could not verify the headset tracking-engine build") from error
-        profile = next((item for item in ENGINE_PROFILES if item.size == engine_size), None)
-        if profile is None:
-            raise RuntimeError(
-                f"Unsupported tracking-engine size ({engine_size}); "
-                "do not use firmware-specific probe offsets"
-            )
-        if profile.sha256 is not None:
-            hash_result = self._adb_root(f"sha256sum {ENGINE_PATH}")
-            actual_hash = hash_result.stdout.strip().split()[0].lower()
-            if actual_hash != profile.sha256:
-                raise RuntimeError(
-                    "Tracking-engine hash differs from the validated build; "
-                    "do not use firmware-specific probe offsets"
-                )
+            profile = self._resolve_engine_profile()
+        except Exception:
+            self._root_shell.close()
+            self._root_shell = None
+            raise
         self.engine_profile = profile
-
-        self._cleanup()
-        self._adb_root(f"mkdir {self.instance_path}")
         try:
+            self._cleanup()
+            self._adb_root(f"mkdir {self.instance_path}")
+            if profile.entry_offset is not None:
+                self._write_event(
+                    f"p:{TRACE_GROUP}/detector_entry {ENGINE_PATH}:0x{profile.entry_offset:x} "
+                    f"{ENTRY_ARGUMENTS}"
+                )
+                self._adb_root(
+                    f"echo 1 '>' {self.instance_path}/events/{TRACE_GROUP}/detector_entry/enable"
+                )
             self._write_event(
                 f"p:{TRACE_GROUP}/detector_output {ENGINE_PATH}:0x{profile.offset:x} "
                 f"{profile.arguments}"
@@ -477,6 +474,11 @@ class RawTraceEyeReader:
             )
             self._adb_root(f"echo 1 '>' {self.instance_path}/tracing_on")
             self._configured = True
+            print(
+                f"GAZE_ENGINE_PROFILE profile={profile.profile} "
+                f"validation={profile.validation} ownership_guard={profile.entry_offset is not None}",
+                flush=True,
+            )
             remote_command = f"su -c 'cat {self.instance_path}/trace_pipe'"
             self._process = subprocess.Popen(
                 [self.adb, "shell", remote_command],
@@ -501,7 +503,8 @@ class RawTraceEyeReader:
 
     def _read(self) -> None:
         assert self._process is not None and self._process.stdout is not None
-        parser = DetectorOutputParser()
+        assert self.engine_profile is not None
+        parser = DetectorOutputParser(guarded=self.engine_profile.entry_offset is not None)
         try:
             for line in self._process.stdout:
                 if self._stopping:
@@ -541,9 +544,11 @@ class RawTraceEyeReader:
         if self._thread is not None:
             self._thread.join(timeout=1.0)
         if self._root_shell is not None:
-            self._cleanup()
-            self._root_shell.close()
-            self._root_shell = None
+            try:
+                self._cleanup()
+            finally:
+                self._root_shell.close()
+                self._root_shell = None
 
 
 def save_capture(

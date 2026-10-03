@@ -15,6 +15,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
+from qpro_eye_engines import ENGINE_PROFILES as PROBE_PROFILES
 
 from prepare_eye_model import (
     AdbClient,
@@ -214,7 +215,7 @@ class PrepareEyeModelTests(unittest.TestCase):
                 report = diagnose(self.quest)
                 self.assertTrue(report["firmwareApproved"])
                 self.assertFalse(report["engineSupported"])
-                with self.assertRaisesRegex(PreparationError, "Unsupported tracking-engine"):
+                with self.assertRaisesRegex(PreparationError, "Tracking-engine SHA-256"):
                     prepare(self.quest, self.output_dir)
         self.assertEqual(self.quest.copy_count, 0)
         self.assertEqual(list(self.output_dir.iterdir()), [])
@@ -246,9 +247,9 @@ class PrepareEyeModelTests(unittest.TestCase):
         self.assertNotIn("firmwareApproved", manifest["device"])
         self.assertNotIn("firmwareApproved", manifest["engine"])
 
-    def test_unknown_reported_engine_stays_rejected_with_exact_build_details(self):
+    def test_unknown_engine_stays_rejected_with_exact_build_details(self):
         self.quest.engine_size = 44_198_016
-        self.quest.engine_hash = "96fdebc377b475df55d59f7added04c5014c4069aa1d636cf3d6f15d8fe27f1e"
+        self.quest.engine_hash = "9" * 64
         self.quest.properties["ro.build.version.incremental"] = "unknown-v24-build"
         self.quest.properties["ro.build.display.id"] = "unknown-v24-display"
         with self.assertRaises(PreparationError) as caught:
@@ -309,18 +310,51 @@ class PrepareEyeModelTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, 2)
         self.assertIn("not allowed with argument", output.getvalue())
 
-    def test_rejects_old_size_on_unknown_build(self):
+    def test_rejects_unreviewed_hash_even_on_known_legacy_build(self):
         self.quest.engine_size = ENGINE_PROFILES[0]["size"]
-        with self.assertRaisesRegex(PreparationError, "reported build is not"):
+        self.quest.properties["ro.build.version.incremental"] = "51483620027600340"
+        with self.assertRaisesRegex(PreparationError, "differs from supported"):
             prepare(self.quest, self.output_dir)
 
-    def test_old_size_profile_requires_known_build_and_pins_actual_hash(self):
+    def test_legacy_engine_requires_exact_hash_and_round_trips(self):
         self.quest.engine_size = ENGINE_PROFILES[0]["size"]
-        self.quest.engine_hash = "b" * 64
+        self.quest.engine_hash = ENGINE_PROFILES[0]["sha256"]
         self.quest.properties["ro.build.version.incremental"] = "51483620027600340"
         manifest = prepare(self.quest, self.output_dir)
-        self.assertEqual(manifest["engine"]["sha256"], "b" * 64)
+        self.assertEqual(manifest["engine"]["sha256"], self.quest.engine_hash)
         self.assertEqual(check_prepared(self.quest, self.output_dir), manifest)
+
+    def test_additional_engine_with_same_size_uses_its_own_hash(self):
+        self.quest.properties["ro.build.version.incremental"] = "51503870023600340"
+        profile = next(item for item in ENGINE_PROFILES if item["profile"] == "51503870023600340")
+        self.quest.engine_size = profile["size"]
+        self.quest.engine_hash = profile["sha256"]
+        manifest = prepare(self.quest, self.output_dir)
+        self.assertEqual(manifest["engine"]["profile"], profile["profile"])
+        self.assertEqual(check_prepared(self.quest, self.output_dir), manifest)
+
+    def test_all_reviewed_builds_prepare_and_round_trip_their_engine_profile(self):
+        for profile in PROBE_PROFILES:
+            for build in profile.builds:
+                with self.subTest(build=build):
+                    self.quest.properties["ro.build.version.incremental"] = build
+                    self.quest.engine_size = profile.size
+                    self.quest.engine_hash = profile.sha256
+                    output = self.output_dir / build
+                    manifest = prepare(self.quest, output)
+                    self.assertEqual(manifest["engine"]["profile"], profile.profile)
+                    self.assertEqual(check_prepared(self.quest, output), manifest)
+                    report = diagnose(self.quest)
+                    self.assertTrue(report["engineSupported"])
+                    self.assertEqual(report["engineProfileValidation"], profile.validation)
+
+    def test_previously_reported_v24_engine_has_a_reviewed_success_hook(self):
+        digest = "96fdebc377b475df55d59f7added04c5014c4069aa1d636cf3d6f15d8fe27f1e"
+        profile = next(item for item in PROBE_PROFILES if item.sha256 == digest)
+        self.assertEqual(profile.size, 44_198_016)
+        self.assertEqual(profile.offset, 0xB37604)
+        self.assertEqual(profile.builds, ("51412760034600340",))
+        self.assertEqual(profile.validation, "firmware-analysis")
 
     def test_preflight_detects_changed_device_firmware_and_model(self):
         prepare(self.quest, self.output_dir)
@@ -696,21 +730,14 @@ class PrepareEyeModelTests(unittest.TestCase):
     def test_profile_gate_stays_aligned_with_native_eye_probe(self):
         native_source = (Path(__file__).parent / "native_raw_eye_probe.py").read_text(encoding="utf-8")
         module = ast.parse(native_source)
-        assignment = next(
-            node for node in module.body
-            if isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == "ENGINE_PROFILES" for target in node.targets)
-        )
-        native_profiles = [
-            (
-                ast.literal_eval(call.args[0]),
-                ast.literal_eval(call.args[3]) if len(call.args) > 3 else next(
-                    (ast.literal_eval(item.value) for item in call.keywords if item.arg == "sha256"),
-                    None,
-                ),
-            )
-            for call in assignment.value.elts
-        ]
+        imported = {
+            item.name for node in module.body
+            if isinstance(node, ast.ImportFrom) and node.module == "qpro_eye_engines"
+            for item in node.names
+        }
+        self.assertIn("ENGINE_PROFILES", imported)
+        self.assertIn("select_engine_profile", imported)
+        native_profiles = [(item.size, item.sha256) for item in PROBE_PROFILES]
         preparation_profiles = [(item["size"], item["sha256"]) for item in ENGINE_PROFILES]
         self.assertEqual(preparation_profiles, native_profiles)
 

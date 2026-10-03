@@ -57,8 +57,11 @@ $sourceFiles = @(
     "test_gaze_recovery.ps1",
     "test_lower_face_orchestration.ps1",
     "test_prepare_eye_model.py",
+    "test_qpro_eye_engines.py",
     "prepare-eye-model.ps1",
     "prepare_eye_model.py",
+    "qpro_eye_engines.py",
+    "eye_detector_guard.py",
     "train-latest-tongue-stills.ps1",
     "train-latest-tongue-refinement.ps1",
     "requirements-runtime.txt",
@@ -159,7 +162,7 @@ $sourceFiles = @(
 )
 foreach ($file in $sourceFiles) { Copy-SourceFile $file }
 foreach ($file in @('controller-input.ps1', 'CONTROLLER_INPUT.md',
-    'CONTROLLER_INPUT_TEST_NOTES.md', 'test_controller_components.py')) { Copy-SourceFile $file }
+    'CONTROLLER_INPUT_TEST_NOTES.md', 'GAZE_ENGINE_TEST_NOTES.md', 'test_controller_components.py')) { Copy-SourceFile $file }
 foreach ($folder in @('hybrid', 'controller-input')) {
     foreach ($file in Get-ChildItem -LiteralPath (Join-Path $root $folder) -Recurse -File | Where-Object {
         $_.Extension -in @('.py', '.js', '.json', '.c', '.cpp', '.h', '.hpp', '.md', '.ps1', '.txt', '.vrdrivermanifest') -or

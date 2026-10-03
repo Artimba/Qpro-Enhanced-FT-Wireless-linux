@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prepare and verify an independent-eye patch from this Quest Pro's stock model.
 
-Only the two engine profiles already supported by native_raw_eye_probe.py are
-eligible. No firmware, engine binary, or stock model is bundled with the app.
+Only engine identities with reviewed native gaze layouts are eligible. No
+firmware, engine binary, or stock model is bundled with the app.
 Preparation refuses other active gaze methods and overlaid model/engine paths;
 that safety check does not make an unsupported tracking engine compatible.
 """
@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from research.patch_seacliff_independent_axes import patch
+from qpro_eye_engines import ENGINE_PROFILES as PROBE_PROFILES
+from qpro_eye_engines import EngineCompatibilityError, select_engine_profile
 
 
 MODEL_ROOT = "/odm/etc/eyetracking/runtime/models"
@@ -171,14 +173,11 @@ APPROVED_FIRMWARE_BUILDS = frozenset(
     }
 )
 
-# Keep these sizes and the pinned hash aligned with native_raw_eye_probe.py.
-ENGINE_PROFILES = (
-    {"profile": "51483620027600340", "size": 47_724_232, "sha256": None},
-    {
-        "profile": "51503870024400340",
-        "size": 47_418_280,
-        "sha256": "0fb6f54a3e190bec791d757ea18d32a8ecc1af4a861992d04b1703c93293cd03",
-    },
+# Preserve the preparation helper's public metadata shape; native layouts live
+# in the same catalog used by the trace reader.
+ENGINE_PROFILES = tuple(
+    {"profile": item.profile, "size": item.size, "sha256": item.sha256}
+    for item in PROBE_PROFILES
 )
 
 
@@ -327,38 +326,11 @@ def _engine_failure(detail: str, device: dict[str, str]) -> PreparationError:
 
 
 def _validate_engine_identity(engine: dict[str, Any], device: dict[str, str]) -> dict[str, Any]:
-    size = engine["size"]
-    digest = engine["sha256"]
-    candidates = [profile for profile in ENGINE_PROFILES if profile["size"] == size]
-    if len(candidates) != 1:
-        raise _engine_failure(
-            f"Unsupported tracking-engine size {size} and SHA-256 {digest}. "
-            "This firmware needs its own validated eye profile.",
-            device,
-        )
-    profile = candidates[0]
-    expected_hash = profile["sha256"]
-    if expected_hash is not None and digest != expected_hash:
-        raise _engine_failure(
-            f"Tracking-engine SHA-256 {digest} differs from supported "
-            f"profile {profile['profile']} ({expected_hash}).",
-            device,
-        )
-    if expected_hash is None:
-        # The older runtime profile has only a validated binary size. Constrain
-        # it to its known OS build, and pin the actual hash to this preparation.
-        build_values = (
-            device["buildFingerprint"],
-            device["buildIncremental"],
-            device["buildDisplayId"],
-        )
-        if not any(re.search(rf"(?<!\d){profile['profile']}(?!\d)", value) for value in build_values):
-            raise _engine_failure(
-                f"Tracking-engine size {size} belongs to an older profile without "
-                f"a pinned hash, but the reported build is not {profile['profile']}.",
-                device,
-            )
-    return {**engine, "profile": profile["profile"]}
+    try:
+        profile = select_engine_profile(engine["size"], engine["sha256"])
+    except EngineCompatibilityError as error:
+        raise _engine_failure(str(error), device) from error
+    return {**engine, "profile": profile.profile}
 
 
 def _engine_identity(client: AdbClient, device: dict[str, str]) -> dict[str, Any]:
@@ -644,6 +616,10 @@ def diagnose(client: AdbClient) -> dict[str, Any]:
         "firmwareApproved": device["buildIncremental"].strip() in APPROVED_FIRMWARE_BUILDS,
         "engine": engine,
         "engineSupported": reason is None,
+        "engineProfileValidation": (
+            select_engine_profile(engine["size"], engine["sha256"]).validation
+            if reason is None else None
+        ),
         "engineCompatibilityReason": reason,
         "modelPath": model_path,
         "modelPathMounted": mounted,
@@ -777,6 +753,11 @@ def main(argv: list[str] | None = None) -> int:
             build = manifest["device"]["buildIncremental"]
             approval = "listed" if build.strip() in APPROVED_FIRMWARE_BUILDS else "not listed"
             print(f"Firmware approval list: {build} ({approval}); tracking engine verified separately.")
+        if not arguments.diagnose:
+            profile = select_engine_profile(manifest["engine"]["size"], manifest["engine"]["sha256"])
+            print(f"Engine profile validation: {profile.validation}.")
+            if profile.validation == "firmware-analysis":
+                print("This engine profile passed firmware code checks; live headset behavior is not yet verified.")
         return 0
     except PreparationError as error:
         print(f"Eye model preparation failed: {error}", file=sys.stderr)
