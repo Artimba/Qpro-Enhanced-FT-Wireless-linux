@@ -180,6 +180,7 @@ internal sealed partial class HubForm
         StyleRunButton(_start, canStart);
         StyleRunButton(_stop, (running || _starting) && !_stopping);
         UpdateCameraCheekAvailability();
+        UpdateControllerInputAvailability();
     }
 
     private async void OnClosing(object? sender, FormClosingEventArgs e)

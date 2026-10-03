@@ -514,16 +514,18 @@ internal sealed partial class HubForm
             ? "an authorized wireless Quest — use First-time setup to connect or pair it"
             : "an authorized Quest over USB — connect the cable and approve debugging");
         if (!Process.GetProcessesByName("vrserver").Any()) missing.Add("SteamVR");
-        if (!Process.GetProcessesByName("VRCFaceTracking").Any()) missing.Add("VRCFaceTracking");
-        else if (_environment.TrackingSourceRequiresVrcftRestart()) missing.Add("restart VRCFaceTracking after changing the face-tracking source");
-        if (!BridgeInstalled()) missing.Add("the Qpro VRCFT module — use First-time setup step 2");
-        else if (!CurrentBridgeInstalled()) missing.Add("the module for this face-tracking source and Qpro build — close VRCFaceTracking, use First-time setup step 2, then restart it");
+        bool faceFeatures = _gaze.Checked || _tongue.Checked || _cameraCheekPuff.Checked || _pupil.Checked;
+        if (faceFeatures && !Process.GetProcessesByName("VRCFaceTracking").Any()) missing.Add("VRCFaceTracking");
+        else if (faceFeatures && _environment.TrackingSourceRequiresVrcftRestart()) missing.Add("restart VRCFaceTracking after changing the face-tracking source");
+        if (faceFeatures && !BridgeInstalled()) missing.Add("the Qpro VRCFT module — use First-time setup step 2");
+        else if (faceFeatures && !CurrentBridgeInstalled()) missing.Add("the module for this face-tracking source and Qpro build — close VRCFaceTracking, use First-time setup step 2, then restart it");
         if (!BackendReady()) missing.Add("the PC runtime — use First-time setup step 1");
         if (_gaze.Checked && !EyeModelReady()) missing.Add("the locally prepared gaze patch — use First-time setup step 3: Prepare independent gaze");
         if (_gaze.Checked && _eyeProfiles.SelectedItem is null) missing.Add("an eye profile");
         if ((_tongue.Checked || _cameraCheekPuff.Checked) && _tongueModels.SelectedItem is null) missing.Add("a paired tongue model");
         if (_cameraCheekPuff.Checked && !SelectedModelHasCameraCheeks()) missing.Add("a trained tongue + cheeks model — use Personalize to record and train cheek camera poses, then select that copy under Lower-face model");
         if (_pupil.Checked && !File.Exists(Path.Combine(_root, "pupil_dilation.py"))) missing.Add("the pupil estimation script — re-extract the complete release");
+        AddControllerPrerequisites(missing);
         return missing;
     }
 
@@ -533,7 +535,7 @@ internal sealed partial class HubForm
         if (UtilityActionIsBusy()) return;
         _trackingProcesses.RemoveAll(p => p.HasExited);
         if (_trackingProcesses.Any(p => !p.HasExited)) { MessageBox.Show(this, "Tracking is already running."); return; }
-        if (!_gaze.Checked && !_tongue.Checked && !_cameraCheekPuff.Checked && !_pupil.Checked) { PlaySfx("warning.wav"); MessageBox.Show(this, "Select at least one tracking feature."); return; }
+        if (!_gaze.Checked && !_tongue.Checked && !_cameraCheekPuff.Checked && !_pupil.Checked && !_hybridHands.Checked && !_controllerTouchpad.Checked) { PlaySfx("warning.wav"); MessageBox.Show(this, "Select at least one tracking feature."); return; }
         _starting = true;
         var startCancellation = new CancellationTokenSource();
         _startCancellation = startCancellation;
@@ -620,10 +622,12 @@ internal sealed partial class HubForm
                 StartManaged(_tongue.Checked || _cameraCheekPuff.Checked ? "Camera tracking" : "Pupil tracking",
                     "build-and-run.ps1", cameraPlan.Arguments);
             }
+            StartControllerInput();
             if (!_gazeFailureHandled)
             {
-                _runStatus.Text = "● Selected overrides active";
-                _runStatus.ForeColor = Good;
+                _runStatus.Text = (_hybridHands.Checked || _controllerTouchpad.Checked)
+                    ? "● Waiting for valid controller input…" : "● Selected overrides active";
+                _runStatus.ForeColor = (_hybridHands.Checked || _controllerTouchpad.Checked) ? Warning : Good;
             }
             UpdateControlState();
         }
@@ -703,11 +707,14 @@ internal sealed partial class HubForm
     {
         var start = PowerShellStart(script, arguments, hidden: true);
         start.RedirectStandardOutput = true; start.RedirectStandardError = true;
+        // Keep a parent pipe open so hand adapters also stop if the Hub exits.
+        start.RedirectStandardInput = label == "Hand/controller input";
         var process = new Process { StartInfo = start, EnableRaisingEvents = true };
         void ReportLine(string line)
         {
             AppendLog($"[{label}] {line}");
             HandleInferenceStatus(label, line);
+            ObserveControllerInput(label, line);
             if (label == "Independent gaze" && line.StartsWith("GAZE_STREAM_READY ", StringComparison.Ordinal))
                 _gazeStartupSignal?.TrySetResult(true);
             if (label == "Independent gaze") ObserveGazeRecovery(line, allowNoSession: false);

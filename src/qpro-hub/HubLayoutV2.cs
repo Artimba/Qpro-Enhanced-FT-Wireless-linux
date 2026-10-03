@@ -115,9 +115,9 @@ internal sealed partial class HubForm
         }
 
         var livePage = NewPage();
-        var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 5, Padding = Padding.Empty, Margin = Padding.Empty };
+        var liveLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 6, Padding = Padding.Empty, Margin = Padding.Empty };
         liveLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var row = 0; row < 5; row++) liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (var row = 0; row < 6; row++) liveLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         livePage.Controls.Add(liveLayout);
         var liveFieldTables = new List<TableLayoutPanel>();
         void LiveRows(TableLayoutPanel card, int row)
@@ -316,10 +316,26 @@ internal sealed partial class HubForm
         Details(nativeCard, nativeSettings, "cheek and eyebrow controls", 2);
         liveLayout.Controls.Add(nativeCard);
 
+        var handsCard = LiveFields();
+        Span(handsCard, SectionTitle("Hands and controllers"), 0);
+        Span(handsCard, _hybridHands, 1);
+        Span(handsCard, _controllerTouchpad, 2);
+        LiveField(handsCard, 3, "Thumb-rest mode", _touchpadMode);
+        _handsStatus.Margin = new Padding(0, 3, 0, 8);
+        Span(handsCard, _handsStatus, 4);
+        _checkHandsButton.Margin = new Padding(0, 4, 8, 4);
+        Span(handsCard, _checkHandsButton, 5);
+        var handsDetails = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, Margin = Padding.Empty };
+        handsDetails.Controls.Add(Info("The hands option can route optical fingers alongside controller position and buttons when the compatibility check passes. Thumb-rest input offers Trackpad, Relative joystick, Swipe or Desktop mouse."));
+        handsDetails.Controls.Add(Info("Start tracking applies the selected options. Desktop mouse can move the Windows pointer. Stop tracking stops these inputs. Both options are experimental and currently require Virtual Desktop."));
+        Details(handsCard, handsDetails, "hand and controller details", 6);
+        liveLayout.Controls.Add(handsCard);
+
         var setupPage = NewPage();
-        var setupLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 6, Margin = Padding.Empty };
+        var setupLayout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 7, Margin = Padding.Empty };
         setupLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        for (var row = 0; row < 6; row++) setupLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        for (var row = 0; row < 7; row++) setupLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         setupPage.Controls.Add(setupLayout);
         var connectionCard = Card(); connectionCard.Dock = DockStyle.Top;
         connectionCard.ColumnCount = 1;
@@ -336,7 +352,9 @@ internal sealed partial class HubForm
         connectionCard.Controls.Add(_connectionModeNote);
         _wirelessSetup.Margin = new Padding(0, 3, 0, 8);
         _wirelessSetup.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        _wirelessSetup.Controls.Add(Info("Enter the Quest's Wi-Fi IP and press Connect to Quest. If it reports ready, skip pairing and start tracking. Use Pair and connect only when Android shows a six-digit pairing code; enter the temporary pairing IP:port from that dialog, which differs from the regular connection port. A one-time USB connection can also enable wireless ADB."));
+        LiveRows(_wirelessSetup, 6);
+        _wirelessSetup.Controls.Add(Info("Enter the Quest's Wi-Fi IP and press Connect to Quest. If it reports ready, start tracking; pairing is not needed. Use Enable from USB if wireless ADB has not been enabled yet."), 0, 0);
+        var wirelessFields = new List<TableLayoutPanel>();
         TableLayoutPanel ConnectionField(string title, TextBox input)
         {
             var row = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, Margin = new Padding(0, 2, 0, 6) };
@@ -345,15 +363,21 @@ internal sealed partial class HubForm
             row.Controls.Add(FieldLabel(title), 0, 0);
             input.Margin = new Padding(0, 3, 0, 3);
             row.Controls.Add(input, 1, 0);
+            wirelessFields.Add(row);
             return row;
         }
-        _wirelessSetup.Controls.Add(ConnectionField("Quest IP:port", _wirelessAddress));
-        _wirelessSetup.Controls.Add(_enableWirelessButton);
-        _wirelessSetup.Controls.Add(_connectWirelessButton);
-        _wirelessSetup.Controls.Add(ConnectionField("Pairing IP:port", _pairingEndpoint));
-        _wirelessSetup.Controls.Add(ConnectionField("Six-digit code", _pairingCode));
-        _wirelessSetup.Controls.Add(_pairWirelessButton);
-        _wirelessSetup.Controls.Add(_disableWirelessButton);
+        _wirelessSetup.Controls.Add(ConnectionField("Quest IP:port", _wirelessAddress), 0, 1);
+        _wirelessSetup.Controls.Add(_enableWirelessButton, 0, 2);
+        _wirelessSetup.Controls.Add(_connectWirelessButton, 0, 3);
+        var pairingOptions = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, Margin = Padding.Empty };
+        pairingOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pairingOptions.Controls.Add(Info("Use Pair and connect only when Android shows a six-digit pairing code. Copy the temporary pairing IP:port and code from that dialog; its port differs from the regular Quest connection port."));
+        pairingOptions.Controls.Add(ConnectionField("Pairing IP:port", _pairingEndpoint));
+        pairingOptions.Controls.Add(ConnectionField("Six-digit code", _pairingCode));
+        pairingOptions.Controls.Add(_pairWirelessButton);
+        Details(_wirelessSetup, pairingOptions, "pairing options", 4);
+        _wirelessSetup.Controls.Add(_disableWirelessButton, 0, 6);
         connectionCard.Controls.Add(_wirelessSetup);
         setupLayout.Controls.Add(connectionCard);
         var setupSource = Card(); setupSource.Dock = DockStyle.Top;
@@ -421,6 +445,13 @@ internal sealed partial class HubForm
             "Neither recovery button disables a Magisk module or uninstalls the PC module.",
             _setupGazeStatus, _inspectGazeButton, _setupGazeButton, _recoverGazeButton, _resetLegacyGazeButton), 0, 2);
         setupLayout.Controls.Add(setupCards);
+        var handsSetup = Card(); handsSetup.ColumnCount = 1;
+        handsSetup.Controls.Add(SectionTitle("Optional hands and controllers"));
+        handsSetup.Controls.Add(Info("Experimental components for compatible Quest Pro and Virtual Desktop versions. Close SteamVR before installing or uninstalling, then reopen SteamVR through Virtual Desktop."));
+        handsSetup.Controls.Add(Info("After installation, use Check hand/controller compatibility on Live tracking before enabling either option. These components have a separate setup from the VRCFaceTracking face module."));
+        handsSetup.Controls.Add(_installHandsButton);
+        handsSetup.Controls.Add(_removeHandsButton);
+        setupLayout.Controls.Add(handsSetup);
         var amdCard = Card(); amdCard.Dock = DockStyle.Top;
         amdCard.Controls.Add(SectionTitle("Optional AMD ROCm acceleration"));
         amdCard.Controls.Add(Info("Install ROCm 10.0 for a mapped discrete Radeon. This Qpro path is experimental until GPU training and inference checks pass. An existing verified ROCm 7.2.1 environment remains a fallback on AMD's older supported GPU list. Install the PC runtime first."));
@@ -452,7 +483,7 @@ internal sealed partial class HubForm
         personalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         personalizationPage.Controls.Add(personalLayout);
         var personalIntro = Card(); personalIntro.Dock = DockStyle.Top;
-        personalIntro.Controls.Add(SectionTitle("Lower-face calibration"));
+        personalIntro.Controls.Add(SectionTitle("Capture and train"));
         personalIntro.Controls.Add(Info("Record tongue and cheek poses to fit tracking to your face and headset position. Quick refinement and Full dataset include 21 cheek camera cards. The camera cheek option is experimental and remains off until you enable it."));
         personalLayout.Controls.Add(personalIntro);
         _trainingProgressContainer.Dock = DockStyle.Top;
@@ -479,20 +510,27 @@ internal sealed partial class HubForm
             ActionButton("Delete selected dataset…", (_, _) => DeleteRecordedDataset(TongueDatasetKind.Full))), 0, 2);
         personalLayout.Controls.Add(choices);
         var cameraCheekTraining = Card(); cameraCheekTraining.Dock = DockStyle.Top;
-        cameraCheekTraining.Controls.Add(SectionTitle("Experimental tongue + cheeks model"));
-        cameraCheekTraining.Controls.Add(Info("Adds cheek camera outputs to a new copy of a selected tongue model. Native cheek calibration remains available. Record all guided poses and test the resulting copy before using it for a session."));
-        cameraCheekTraining.Controls.Add(new Label { Text = "Parent tongue model", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 4) });
+        cameraCheekTraining.ColumnCount = 1;
+        Span(cameraCheekTraining, SectionTitle("Experimental tongue + cheeks model"), 0);
+        Span(cameraCheekTraining, Info("Quick refinement and Full dataset already include cheek camera poses. Use this separate capture to add cheeks to a new copy of a selected tongue model."), 1);
+        var cameraCheekTrainingBody = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, Margin = Padding.Empty };
+        cameraCheekTrainingBody.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        LiveRows(cameraCheekTrainingBody, 6);
+        cameraCheekTrainingBody.Controls.Add(Info("Native cheek calibration remains available. Record all guided poses and test the resulting copy before using it for a session."), 0, 0);
+        cameraCheekTrainingBody.Controls.Add(new Label { Text = "Parent tongue model", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 4) }, 0, 1);
         _cheekCameraBaseModels.Margin = new Padding(0, 3, 0, 8);
-        cameraCheekTraining.Controls.Add(_cheekCameraBaseModels);
-        cameraCheekTraining.Controls.Add(new Label { Text = "Completed cheek camera dataset", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 4) });
+        cameraCheekTrainingBody.Controls.Add(_cheekCameraBaseModels, 0, 2);
+        cameraCheekTrainingBody.Controls.Add(new Label { Text = "Completed cheek camera dataset", AutoSize = true, ForeColor = Muted, Margin = new Padding(0, 4, 0, 4) }, 0, 3);
         _cheekCameraDatasets.Margin = new Padding(0, 3, 0, 8);
         _cheekCameraDatasetNote.Margin = new Padding(0, 0, 0, 8);
-        cameraCheekTraining.Controls.Add(_cheekCameraDatasets);
-        cameraCheekTraining.Controls.Add(_cheekCameraDatasetNote);
+        cameraCheekTrainingBody.Controls.Add(_cheekCameraDatasets, 0, 4);
+        cameraCheekTrainingBody.Controls.Add(_cheekCameraDatasetNote, 0, 5);
         var cameraCheekActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = Padding.Empty };
         cameraCheekActions.Controls.Add(_recordCameraCheeks);
         cameraCheekActions.Controls.Add(_trainCameraCheeks);
-        cameraCheekTraining.Controls.Add(cameraCheekActions);
+        cameraCheekTrainingBody.Controls.Add(cameraCheekActions, 0, 6);
+        Details(cameraCheekTraining, cameraCheekTrainingBody, "advanced cheek training", 2);
         personalLayout.Controls.Add(cameraCheekTraining);
 
         var modelsPage = NewPage();
@@ -767,9 +805,7 @@ internal sealed partial class HubForm
                 foreach (var page in pageList) FitPageWidth(page);
                 connectionPicker.ColumnStyles[0].Width = fieldWidth;
                 setupSource.ColumnStyles[0].Width = fieldWidth;
-                foreach (Control child in _wirelessSetup.Controls)
-                    if (child is TableLayoutPanel field && field.ColumnCount == 2)
-                        field.ColumnStyles[0].Width = fieldWidth;
+                foreach (var field in wirelessFields) field.ColumnStyles[0].Width = fieldWidth;
                 foreach (TableLayoutPanel card in setupCards.Controls)
                 {
                     var actionCount = card.GetControlFromPosition(0, 4) is TableLayoutPanel actions ? actions.RowCount : 1;
@@ -778,7 +814,7 @@ internal sealed partial class HubForm
                 FitModelManagerHeight();
 
                 foreach (var toggle in new[] { _gaze, _tongue, _pupil, _cameraPreview, _cameraCheekPuff,
-                    _individualCheekPuff, _individualCheekSuck, _eyebrowBoost })
+                    _individualCheekPuff, _individualCheekSuck, _eyebrowBoost, _hybridHands, _controllerTouchpad })
                     toggle.Height = Math.Max(Px(38), (int)Math.Ceiling(toggle.Font.GetHeight()) + Px(14));
                 _fps.Width = Px(84);
                 _pupilSensitivity.Width = Px(220);
@@ -791,7 +827,7 @@ internal sealed partial class HubForm
                 _smoothing.Height = Px(32);
                 foreach (var box in new[] { _eyeProfiles, _tongueModels, _fps, _pupilSensitivity,
                     _eyebrowSensitivity, _cheekPuffStyle, _cheekSuckStyle,
-                    _visibilityMode, _connectionMode, _trackingSourceSetup, _trackingSourceLive,
+                    _visibilityMode, _connectionMode, _trackingSourceSetup, _trackingSourceLive, _touchpadMode,
                     _quickDatasets, _focusedDatasets, _fullDatasets,
                     _quickRecordedDatasets, _focusedRecordedDatasets, _fullRecordedDatasets,
                     _cheekCameraBaseModels, _cheekCameraDatasets })
@@ -803,7 +839,8 @@ internal sealed partial class HubForm
                     box.MinimumSize = new Size(0, box.Height);
                     if (box.Parent is TableLayoutPanel fields)
                     {
-                        var row = fields.GetPositionFromControl(box).Row;
+                        var row = fields.GetRow(box);
+                        if (row < 0) row = fields.GetPositionFromControl(box).Row;
                         if (row < 0) continue;
                         while (fields.RowStyles.Count <= row) fields.RowStyles.Add(new RowStyle(SizeType.AutoSize));
                         fields.RowStyles[row].SizeType = SizeType.Absolute;
@@ -813,7 +850,7 @@ internal sealed partial class HubForm
                 _modelList.ItemHeight = Math.Max(Px(40), (int)Math.Ceiling(_modelList.Font.GetHeight()) + Px(12));
                 foreach (var button in new[] { _setupRuntimeButton, _setupBridgeButton, _setupSteamLinkModuleButton, _uninstallBridgeButton,
                     _setupGazeButton, _recoverGazeButton, _inspectGazeButton, _resetLegacyGazeButton, _setupAmdButton, _enableWirelessButton, _connectWirelessButton,
-                    _pairWirelessButton, _disableWirelessButton })
+                    _pairWirelessButton, _disableWirelessButton, _installHandsButton, _removeHandsButton })
                     button.Height = Px(42);
                 FitCheekActions();
             }

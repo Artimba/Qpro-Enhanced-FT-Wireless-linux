@@ -112,6 +112,21 @@ internal sealed partial class HubForm
         toggle.FlatAppearance.BorderColor = Border;
         toggle.FlatAppearance.CheckedBackColor = Selected;
         toggle.FlatAppearance.MouseDownBackColor = RaisedHover;
+        toggle.Paint += (_, e) =>
+        {
+            if (toggle.Enabled) return;
+            // WinForms uses the system disabled text color, which can become
+            // nearly black on these dark cards. Keep our caption readable.
+            var interior = toggle.ClientRectangle;
+            interior.Inflate(-Math.Max(2, toggle.FlatAppearance.BorderSize),
+                -Math.Max(2, toggle.FlatAppearance.BorderSize));
+            using var fill = new SolidBrush(toggle.BackColor);
+            e.Graphics.FillRectangle(fill, interior);
+            TextRenderer.DrawText(e.Graphics, toggle.Text, toggle.Font,
+                new Rectangle(6, 0, Math.Max(1, toggle.Width - 12), toggle.Height), Muted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine |
+                TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+        };
         return toggle;
     }
 

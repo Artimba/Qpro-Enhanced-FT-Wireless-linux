@@ -156,6 +156,7 @@ internal sealed partial class HubForm : Form
 
         Controls.Add(BuildLayout());
         InitializeTrackingSourceUi();
+        InitializeControllerInputUi();
         if (rememberLaunch)
             Shown += (_, _) =>
             {
@@ -402,5 +403,6 @@ internal sealed partial class HubForm : Form
         _trackingSourceSetupNote.Text = note;
         _trackingSourceLiveNote.Text = note;
         UpdateModuleInstallButtonState(!_setupActionRunning);
+        UpdateControllerInputAvailability();
     }
 }
