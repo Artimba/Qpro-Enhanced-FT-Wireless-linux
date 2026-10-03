@@ -24,6 +24,9 @@ default. It is a **test build**, not a validated hardware release.
   tracking** (tongue and cheek controls), and **Hands and controllers** at the
   bottom. Cheek response and calibration controls are directly visible.
 - Updated the bundled PDF and text instructions to match the visible controls.
+- Added the 30 supplied dot-free gaze firmware IDs to the preparation helper's
+  approval catalog. Diagnostics report firmware approval separately from engine
+  support; the existing engine size/hash and legacy-build checks still apply.
 
 ## Compatibility and test limits
 

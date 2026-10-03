@@ -18,6 +18,7 @@ from unittest import mock
 
 from prepare_eye_model import (
     AdbClient,
+    APPROVED_FIRMWARE_BUILDS,
     ENGINE_PATH,
     ENGINE_PROFILES,
     EXPERIMENTAL_MODEL_PATH,
@@ -204,6 +205,46 @@ class PrepareEyeModelTests(unittest.TestCase):
         self.quest.engine_hash = "a" * 64
         with self.assertRaisesRegex(PreparationError, "differs from supported"):
             prepare(self.quest, self.output_dir)
+
+    def test_approved_firmware_does_not_bypass_engine_validation(self):
+        for build in APPROVED_FIRMWARE_BUILDS:
+            with self.subTest(build=build):
+                self.quest.properties["ro.build.version.incremental"] = build
+                self.quest.engine_size = 44_198_016
+                report = diagnose(self.quest)
+                self.assertTrue(report["firmwareApproved"])
+                self.assertFalse(report["engineSupported"])
+                with self.assertRaisesRegex(PreparationError, "Unsupported tracking-engine"):
+                    prepare(self.quest, self.output_dir)
+        self.assertEqual(self.quest.copy_count, 0)
+        self.assertEqual(list(self.output_dir.iterdir()), [])
+
+    def test_approved_firmware_does_not_bypass_engine_hash(self):
+        self.quest.engine_hash = "a" * 64
+        report = diagnose(self.quest)
+        self.assertTrue(report["firmwareApproved"])
+        self.assertFalse(report["engineSupported"])
+        with self.assertRaisesRegex(PreparationError, "differs from supported"):
+            prepare(self.quest, self.output_dir)
+        self.assertEqual(self.quest.copy_count, 0)
+
+    def test_firmware_approval_requires_exact_dot_free_incremental_id(self):
+        for build in ("207.0.0.218.1234.1051346098", "515038700244003400", "build-51503870024400340"):
+            with self.subTest(build=build):
+                self.quest.properties["ro.build.version.incremental"] = build
+                report = diagnose(self.quest)
+                self.assertFalse(report["firmwareApproved"])
+                self.assertTrue(report["engineSupported"])
+
+    def test_unlisted_firmware_with_verified_engine_keeps_existing_support(self):
+        self.quest.properties["ro.build.version.incremental"] = "51503870099900340"
+        report = diagnose(self.quest)
+        self.assertFalse(report["firmwareApproved"])
+        self.assertTrue(report["engineSupported"])
+        manifest = prepare(self.quest, self.output_dir)
+        self.assertEqual(check_prepared(self.quest, self.output_dir), manifest)
+        self.assertNotIn("firmwareApproved", manifest["device"])
+        self.assertNotIn("firmwareApproved", manifest["engine"])
 
     def test_unknown_reported_engine_stays_rejected_with_exact_build_details(self):
         self.quest.engine_size = 44_198_016

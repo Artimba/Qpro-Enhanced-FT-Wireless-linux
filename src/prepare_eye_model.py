@@ -133,6 +133,44 @@ getprop persist.device_config.oculus_shared_vision.oculus_eyetracking_enable_exp
 printf '\nQPRO_EXPERIMENTAL_END\nQPRO_GAZE_SCAN_COMPLETE\n'
 """
 
+# Firmware IDs approved for this project, supplied without dotted OS versions.
+# This catalog records firmware approval, not native hook compatibility. The
+# engine size/hash checks below still decide whether gaze can be prepared.
+APPROVED_FIRMWARE_BUILDS = frozenset(
+    {
+        "51503870024400340",
+        "51503870023600340",
+        "51503870021300340",
+        "51503870020100340",
+        "51503870019200340",
+        "51503870018800340",
+        "51503870018000340",
+        "51483620032400340",
+        "51483620027600340",
+        "51483620026500340",
+        "51483620024400340",
+        "51483620023800340",
+        "51483620020700340",
+        "51483620019200340",
+        "51463340027700340",
+        "51436340040000340",
+        "51436340031400340",
+        "51436340028700340",
+        "51412760034600340",
+        "51412760030200340",
+        "51412760027100340",
+        "51412760025900340",
+        "51412760020900340",
+        "51412760014500340",
+        "51360500051900340",
+        "51360500040800340",
+        "51360500037600340",
+        "51360500035000340",
+        "51360500032000340",
+        "51360500027200340",
+    }
+)
+
 # Keep these sizes and the pinned hash aligned with native_raw_eye_probe.py.
 ENGINE_PROFILES = (
     {"profile": "51483620027600340", "size": 47_724_232, "sha256": None},
@@ -281,6 +319,7 @@ def _engine_failure(detail: str, device: dict[str, str]) -> PreparationError:
     )
     return PreparationError(
         f"{detail} Firmware: {firmware}. "
+        f"Firmware approval list: {'listed' if device['buildIncremental'].strip() in APPROVED_FIRMWARE_BUILDS else 'not listed'}. "
         "The Hub's independent gaze is unavailable for this build; leave Independent Eye Gaze off. "
         "No headset tracking was changed. Check a Magisk gaze module's support for this exact "
         "firmware before using it, and use one gaze method at a time as described in the setup guide."
@@ -602,6 +641,7 @@ def diagnose(client: AdbClient) -> dict[str, Any]:
             key: device[key]
             for key in ("model", "productDevice", "buildIncremental", "buildDisplayId", "buildFingerprint")
         },
+        "firmwareApproved": device["buildIncremental"].strip() in APPROVED_FIRMWARE_BUILDS,
         "engine": engine,
         "engineSupported": reason is None,
         "engineCompatibilityReason": reason,
@@ -734,6 +774,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Independent-eye support prepared locally: {OUTPUT_DIR / PATCHED_NAME}")
             print(f"Verified stock model: {manifest['modelPath']}")
             print(f"Verified tracking-engine profile: {manifest['engine']['profile']}")
+            build = manifest["device"]["buildIncremental"]
+            approval = "listed" if build.strip() in APPROVED_FIRMWARE_BUILDS else "not listed"
+            print(f"Firmware approval list: {build} ({approval}); tracking engine verified separately.")
         return 0
     except PreparationError as error:
         print(f"Eye model preparation failed: {error}", file=sys.stderr)
