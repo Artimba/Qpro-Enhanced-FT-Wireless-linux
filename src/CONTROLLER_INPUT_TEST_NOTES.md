@@ -26,7 +26,9 @@ default. It is a **test build**, not a validated hardware release.
 - Updated the bundled PDF and text instructions to match the visible controls.
 - Added the 30 supplied dot-free gaze firmware IDs to the preparation helper's
   approval catalog. Diagnostics report firmware approval separately from engine
-  support; the existing engine size/hash and legacy-build checks still apply.
+  support. The gaze compatibility test now has exact size/hash profiles for
+  those engines; see **GAZE_ENGINE_TEST_NOTES.md**. This does not expand the
+  controller firmware profile.
 
 ## Compatibility and test limits
 
