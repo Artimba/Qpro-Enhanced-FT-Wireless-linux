@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "status": "experimental-unvalidated-runtime",
+  "fridaVersion": "17.18.0",
+  "androidPackage": "VirtualDesktop.Android",
+  "androidVersion": "1.34.22.0",
+  "pcDriverRelativePath": "Virtual Desktop Streamer/OpenVRDriver/bin/win64/driver_VirtualDesktop.dll",
+  "pcDriverSha256": "ad3c99c7f7346613d4c7106fb94476be5859ca17a637a11cfc156184d466f36f",
+  "pcLayout": {
+    "controllerTable": 632640,
+    "skeletonTable": 632744,
+    "driverContext": 632504,
+    "driverHost": 632544,
+    "handPointer": 72,
+    "role": 28,
+    "multiModal": 26,
+    "skeleton": 240,
+    "deviceIndex": 64,
+    "dataPointer": 16,
+    "frameFlags": 140,
+    "frameSideStride": 68,
+    "opticalFlags": 560
+  },
+  "monoLayout": {
+    "assembly": "Xenko.VR",
+    "namespace": "Xenko.VR",
+    "class": "OpenXRHMD",
+    "settingsAssembly": "VirtualDesktop.Mobile.Shared",
+    "settingsNamespace": "VirtualDesktop.Mobile",
+    "settingsClass": "SharedUserSettings",
+    "leftFingerOffset": 4,
+    "rightFingerOffset": 1460
+  },
+  "leaseSeconds": 20,
+  "heartbeatSeconds": 3,
+  "readinessSeconds": 45,
+  "interfaceVersions": ["IVRDriverInput_005", "IVRDriverInput_004"],
+  "boneCount": 31
+}
