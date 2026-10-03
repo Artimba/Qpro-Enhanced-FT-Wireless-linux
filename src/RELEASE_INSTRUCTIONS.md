@@ -58,7 +58,7 @@ Choose **one** connection type on **First-time setup**. If this is your first ti
 3. A **Quest connected** pop-up means wireless ADB and Magisk root are ready. Activity will also say **Wireless Quest ready**. **Do not press Pair and connect.** You can unplug the USB cable, if one was attached. If a **Quest connection failed** pop-up appears, check the Quest's current IP and port, keep it awake, and read **Activity** for the exact error.
 4. If the wireless connection is off but USB works, plug in USB once and press **Enable from USB**. After the Hub reports success, unplug USB and connect to the saved Quest address.
 
-**Pair and connect** is only for a headset that shows a **six-digit wireless debugging pairing code**. Keep the pairing message open in the headset. Put the short-lived address shown next to the code into **Pairing IP:port**, put the code into **Six-digit code**, and keep the normal Quest address in **Quest IP:port**. The two port numbers are different. For example, `192.168.1.25:5555` is a normal connection address, **not** a pairing address. Use your Quest's actual address.
+**Pair and connect** is only for a headset that shows a **six-digit wireless debugging pairing code**. Keep the pairing message open in the headset. Press **Show pairing options** in the Hub. Put the short-lived address shown next to the code into **Pairing IP:port**, put the code into **Six-digit code**, and keep the normal Quest address in **Quest IP:port**. The two port numbers are different. For example, `192.168.1.25:5555` is a normal connection address, **not** a pairing address. Use your Quest's actual address.
 
 If pairing says `protocol fault`, open a new pairing message on the headset and use its new code and pairing port. If **Connect to Quest** already said ready, skip pairing. Your Quest's Wi-Fi address may change after a reboot; update it in the Hub if it does. Use wireless ADB only on a trusted network.
 
@@ -91,6 +91,18 @@ New ROCm installations use a short, shared Qpro folder under `%LOCALAPPDATA%\Qpr
 
 **NVIDIA GPU or CPU:** skip the AMD button. NVIDIA CUDA hardware has been live-tested and is functional. When tracking starts, **Activity** tells you whether lower-face inference and pupil processing are using AMD, NVIDIA, or CPU.
 
+### Optional: experimental hands and controllers (test build)
+
+These controller features are separate from the Qpro face module and are off by default. They are a prototype, with offline checks completed; live finger routing and controller bindings still need testing. They currently require **Virtual Desktop**, a rooted Quest Pro, headset hand tracking, and Singularity's **Simultaneous Hands & Controllers** switch. Steam Link is not supported for these experimental controls.
+
+1. Close **SteamVR**. In **First-time setup > Optional hands and controllers**, press **Install hand/controller components**. Setup downloads checksum-verified Frida 17.18.0 into a separate Qpro environment and registers Qpro's controller add-on. No global Python or SteamVR settings file is changed.
+2. Reopen SteamVR through Virtual Desktop. On **Live tracking > Hands and controllers**, press **Check hand/controller compatibility**. The first hand profile admits headset Virtual Desktop **1.34.22.0** and an exact PC Streamer driver fingerprint. Other builds are refused before process attachment. Turn off Singularity's separate Frida Server to avoid competing helpers.
+3. Enable **Experimental hands + controllers** if you want optical finger movement while holding physical controllers. Press **Start tracking**, then hold your fingers where the headset cameras can see them. Activity reports valid routing separately from adapter startup. Body-tracking interaction has not been tested.
+4. **Experimental Touch Pro thumb-rest input** adds SteamVR trackpad inputs from the controllers' thumb-rest sensors. Its first read-only sensor profile is limited to firmware build **51503870024400340** and remains unvalidated on a live headset. Choose **Thumb-rest mode**: **Trackpad**, **Relative joystick**, **Swipe**, or **Desktop mouse**. Mouse mode explicitly moves the Windows pointer; it is not enabled automatically. Bind the new trackpad inputs in SteamVR for your app; installing them does not automatically add VRChat actions.
+5. **Stop tracking** requests hand-adapter restoration and disables custom thumb-rest output. An installed controller profile can remain cached by SteamVR. To remove it, close SteamVR, press **Uninstall controller add-on**, then reopen SteamVR to reload the normal profile. Existing controller poses, buttons and haptics are forwarded by the add-on.
+
+See [the experimental controller guide](https://github.com/Fwooffy/Qpro-Enhanced-FT-Wireless/blob/main/src/CONTROLLER_INPUT.md) for compatibility and recovery details. These test features are not a promise of support for newer Virtual Desktop or firmware versions.
+
 ## 6. Lower-face calibration: record and train tongue and cheeks
 
 **Train if you have no personal model or used a version before V2.0. You can import a working V2.0 through V2.0.2 model into V2.1.2.** The bundled models were trained on other wearers.
@@ -116,7 +128,7 @@ To try a combined model, open **Live tracking > Lower-face tracking**, choose it
 
 The model predicts separate left and right strengths between 0 and 1 from the mouth cameras. It can run with tongue tracking off. Camera cheek output does not use the short native cheek calibration or its response style. Turning it off, stopping Qpro, or losing its live camera feed returns cheek puff to your selected native cheek settings.
 
-The **Experimental tongue + cheeks model** card on **Personalize** lets you add just the 21 cheek cards to a new copy of an existing tongue model. Choose **Parent tongue model**, press **1. Record cheek camera poses**, then choose the completed recording and press **2. Train tongue + cheeks copy**. This freezes the tongue model while learning its cheek outputs; the original model stays saved. Test the new copy with fresh poses before relying on it. Camera cheek tracking remains experimental and may need a personal recording for another face or headset fit.
+The **Experimental tongue + cheeks model** card on **Personalize** lets you add just the 21 cheek cards to a new copy of an existing tongue model. Press **Show advanced cheek training**, choose **Parent tongue model**, then press **1. Record cheek camera poses**, then choose the completed recording and press **2. Train tongue + cheeks copy**. This freezes the tongue model while learning its cheek outputs; the original model stays saved. Test the new copy with fresh poses before relying on it. Camera cheek tracking remains experimental and may need a personal recording for another face or headset fit.
 
 ### Trying Mustachio
 

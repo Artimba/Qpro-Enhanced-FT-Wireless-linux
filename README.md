@@ -29,6 +29,7 @@ For help, share relevant Hub **Activity** lines in the [community Discord](https
 
 ## Credits
 
+- [Yeusepe / QFTPlus](https://github.com/Yeusepe/QFTPlus) documented runtime interfaces and controller sensor layouts researched for the independently authored experimental hands/controller prototype.
 - [n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT) created the original Qpro-Enhanced-FT project that this edition is based on.
 - Fwooffy maintains this edition and wrote its beginner face tracking guide.
 - [Lumince and the Singularity contributors](https://github.com/Lumince/singularity) created the headset root project used by this workflow.

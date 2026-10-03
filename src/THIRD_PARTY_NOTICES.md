@@ -27,3 +27,22 @@ Meta, Virtual Desktop, VRCFaceTracking, VRChat, Project Babble, or EyeTrackVR.
 
 The project source is provided under the MIT License. Third-party names and APIs
 remain subject to their respective owners' terms and licenses.
+
+## Experimental controller components
+
+The experimental controller backend uses the pinned Valve OpenVR driver header
+(revision `0924064316de3effbcd1acf1e309182a2deb1c05`). Its upstream license is
+retained under `controller-input/third_party/openvr/LICENSE` in the source and
+`controller-input/addon/LICENSE.OpenVR.txt` in the runnable package.
+
+Optional setup downloads Frida 17.18.0 from its official GitHub release and the
+Windows x64 wheel from PyPI, with pinned SHA-256 checks. Those artifacts retain
+their upstream licensing; the wheel includes its distribution metadata. Frida
+source and licensing: https://github.com/frida/frida. The server and wheel are
+not prebundled in the release ZIP or installed into a global Python environment.
+
+QFTPlus was consulted for runtime interface and sensor layout research. The new
+adapters, supervisor, contact logic and packet protocol are independently
+authored; QFTPlus source/binaries and proprietary Virtual Desktop binaries are
+not distributed by this controller feature. Reference:
+https://github.com/Yeusepe/QFTPlus/tree/aff54dcc70ea87ac04f93da3063c05a5d30cd7a4

@@ -66,6 +66,7 @@ The Windows Hub is in [`qpro-hub/`](qpro-hub/), the VRCFaceTracking module in [`
 
 ## Credits
 
+- [Yeusepe / QFTPlus](https://github.com/Yeusepe/QFTPlus) documented runtime interfaces and controller sensor layouts researched for the independently authored experimental hands/controller prototype.
 - [n0tmast3r](https://github.com/n0tmast3r/Qpro-Enhanced-FT) created the original Qpro-Enhanced-FT project.
 - [Lumince and Singularity contributors](https://github.com/Lumince/singularity) created the headset root project used by this workflow.
 - [danwillm](https://github.com/danwillm/VRCFT-SteamLink) and the [LinkFT contributors](https://github.com/ykeara/LinkFT) documented the Steam Link tracking source used by Qpro's module.

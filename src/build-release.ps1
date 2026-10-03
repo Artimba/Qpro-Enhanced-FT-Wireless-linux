@@ -6,7 +6,8 @@ param(
     [string]$VrcftInstallDir = "",
     [string]$ExperimentalTongueModelRoot = "",
     [string]$CameraCheekModelRoot = "",
-    [string]$TestNotesPath = ""
+    [string]$TestNotesPath = "",
+    [string]$ControllerInputAssetRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -189,6 +190,40 @@ $runtimeFiles = @(
 )
 foreach ($file in $runtimeFiles) { Copy-ReleaseFile $file }
 
+# The optional controller runtime is built separately from the .NET face module.
+# Copy an explicit list so compiler caches, debug symbols and reference source
+# cannot enter the runnable archive.
+$controllerAssetRoot = if ($ControllerInputAssetRoot) {
+    [System.IO.Path]::GetFullPath($ControllerInputAssetRoot)
+} else { Join-Path $root 'artifacts\controller-native-build' }
+$controllerSourceFiles = @(
+    'controller-input.ps1', 'controller-input\manage.py',
+    'hybrid\controller.py', 'hybrid\compatibility.json',
+    'hybrid\quest_hand_adapter.js', 'hybrid\quest_controller_adapter.js',
+    'hybrid\steamvr_skeleton_adapter.js',
+    'controller-input\third_party\openvr\LICENSE'
+)
+foreach ($file in $controllerSourceFiles) { Copy-ReleaseFile $file; $runtimeFiles += $file }
+$controllerAssets = @{
+    'qpro-controller-input' = 'controller-input\qpro-controller-input'
+    'qpro_controller\driver.vrdrivermanifest' = 'controller-input\addon\driver.vrdrivermanifest'
+    'qpro_controller\bin\win64\driver_qpro_controller.dll' = 'controller-input\addon\bin\win64\driver_qpro_controller.dll'
+    'qpro_controller\resources\settings.json' = 'controller-input\addon\resources\settings.json'
+    'qpro_controller\resources\input\quest_pro_touchpad.json' = 'controller-input\addon\resources\input\quest_pro_touchpad.json'
+    'qpro_controller\LICENSE.OpenVR.txt' = 'controller-input\addon\LICENSE.OpenVR.txt'
+    'qpro_controller\README.md' = 'controller-input\addon\README.md'
+}
+foreach ($entry in $controllerAssets.GetEnumerator()) {
+    $source = Join-Path $controllerAssetRoot $entry.Key
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Optional controller binary/resource is missing: $($entry.Key). Run controller-input\build-native.ps1 with a portable Zig compiler, or supply -ControllerInputAssetRoot."
+    }
+    $destination = Join-Path $runtimeRoot $entry.Value
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    Copy-Item -LiteralPath $source -Destination $destination
+    $runtimeFiles += $entry.Value
+}
+
 if (-not [string]::IsNullOrWhiteSpace($ExperimentalTongueModelRoot)) {
     $experimentalRoot = [System.IO.Path]::GetFullPath($ExperimentalTongueModelRoot)
     $metadataFiles = @(Get-ChildItem -LiteralPath $experimentalRoot -File -Filter 'qpro-stereo-tongue-v*.metadata.json')
@@ -305,7 +340,7 @@ foreach ($launcher in @(
 Copy-Item -LiteralPath (Join-Path $root "RELEASE_HELPERS_README.md") -Destination (Join-Path $helpersRoot "README.md")
 $docsRoot = Join-Path $releaseRoot "Docs"
 New-Item -ItemType Directory -Force -Path $docsRoot | Out-Null
-foreach ($document in @("LICENSE", "THIRD_PARTY_NOTICES.md", "UPSTREAM-README.md", "RELEASE_INSTRUCTIONS.md", "RELEASE_NOTES_V2.1.2.md")) {
+foreach ($document in @("LICENSE", "THIRD_PARTY_NOTICES.md", "UPSTREAM-README.md", "RELEASE_INSTRUCTIONS.md", "RELEASE_NOTES_V2.1.2.md", "CONTROLLER_INPUT.md")) {
     $documentSource = Join-Path $root $document
     if (-not (Test-Path -LiteralPath $documentSource) -and $assetRootResolved) {
         $documentSource = Join-Path $assetRootResolved $document

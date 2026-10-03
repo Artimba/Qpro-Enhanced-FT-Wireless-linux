@@ -158,6 +158,16 @@ $sourceFiles = @(
     "tests\cheek-calibration\Program.cs"
 )
 foreach ($file in $sourceFiles) { Copy-SourceFile $file }
+foreach ($file in @('controller-input.ps1', 'CONTROLLER_INPUT.md',
+    'CONTROLLER_INPUT_TEST_NOTES.md', 'test_controller_components.py')) { Copy-SourceFile $file }
+foreach ($folder in @('hybrid', 'controller-input')) {
+    foreach ($file in Get-ChildItem -LiteralPath (Join-Path $root $folder) -Recurse -File | Where-Object {
+        $_.Extension -in @('.py', '.js', '.json', '.c', '.cpp', '.h', '.hpp', '.md', '.ps1', '.txt', '.vrdrivermanifest') -or
+        $_.Name -eq 'LICENSE'
+    }) {
+        Copy-SourceFile $file.FullName.Substring($root.Length + 1)
+    }
+}
 foreach ($hubSource in Get-ChildItem -LiteralPath (Join-Path $root "qpro-hub") -File -Filter "*.cs") {
     Copy-SourceFile ("qpro-hub\" + $hubSource.Name)
 }
@@ -190,7 +200,7 @@ $forbidden = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Objec
 if ($forbidden.Count) { throw "Binary/private artifacts entered the GitHub source export: $($forbidden.FullName -join ', ')" }
 
 $userFolderMarker = ':' + [System.IO.Path]::DirectorySeparatorChar + 'Users' + [System.IO.Path]::DirectorySeparatorChar
-$textExtensions = @('.json', '.md', '.ps1', '.py', '.txt', '.cmd', '.cs', '.csproj', '.c')
+$textExtensions = @('.json', '.md', '.ps1', '.py', '.txt', '.cmd', '.cs', '.csproj', '.c', '.cpp', '.h', '.hpp', '.js')
 foreach ($file in Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object Extension -In $textExtensions) {
     $content = [System.IO.File]::ReadAllText($file.FullName).Replace('\\', '\')
     if ($content.IndexOf($userFolderMarker, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
